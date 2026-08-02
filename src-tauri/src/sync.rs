@@ -65,6 +65,13 @@ impl SyncClient {
         format!("{}{}", self.base.trim_end_matches('/'), path)
     }
 
+    // Server zpos percaya cookie `zpos_token` (getTokoFromRequest baca cookie, BUKAN
+    // header Authorization/Bearer). Jadi kita kirim token via Cookie header.
+    // JWT = base64url (huruf, angka, -, _, .) — aman utk value cookie tanpa encode.
+    fn auth_cookie(&self) -> String {
+        format!("zpos_token={}", self.token)
+    }
+
     // Pesan error diagnosa: status + sampel body server (biar ketahuan 401/404/500 & pesannya).
     // Mengambil resp by value (resp.text() consume) — panggil HANYA di branch return.
     fn err_detail(&self, resp: reqwest::blocking::Response) -> String {
@@ -84,7 +91,7 @@ impl SyncClient {
     // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
     pub fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/produk?semua=1"))
-            .bearer_auth(&self.token)
+            .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json: {e}"))?;
@@ -113,7 +120,7 @@ impl SyncClient {
     // join nama kategori → frontend tampilkan ikon & filter kategori.
     pub fn pull_kategori(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/kategori"))
-            .bearer_auth(&self.token)
+            .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json: {e}"))?;
@@ -135,7 +142,7 @@ impl SyncClient {
     // Member + kategori member dari server → upsert.
     pub fn pull_member(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/member"))
-            .bearer_auth(&self.token)
+            .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json: {e}"))?;
@@ -183,7 +190,7 @@ impl SyncClient {
                 total,
             };
             let resp = self.http.post(self.endpoint("/api/transaksi"))
-                .bearer_auth(&self.token)
+                .header("Cookie", self.auth_cookie())
                 .json(&body)
                 .send().map_err(|e| format!("network: {e}"))?;
             // 409 = duplikat (sudah pernah masuk) → anggap sukses, hapus antrian.
