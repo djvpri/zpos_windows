@@ -141,6 +141,13 @@
   /* toast */
   .toast { position:fixed; bottom:24px; left:50%; translate:-50% 0; background:#1e2f4d; color:#fff; padding:11px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 30px rgba(0,0,0,.25); opacity:0; transition:.3s; pointer-events:none; }
   .toast.show { opacity:1; }
+  /* bar error sinkron — persisten, biar ketahuan salahnya (bukan toast ilang 1.8s) */
+  .errbar { position:fixed; bottom:64px; left:50%; translate:-50% 0; max-width:88vw;
+    background:#7f1d1d; color:#ffe4e6; padding:10px 14px; border-radius:10px;
+    font-size:12px; line-height:1.5; box-shadow:0 8px 30px rgba(0,0,0,.3);
+    opacity:0; transition:.3s; pointer-events:none; white-space:pre-wrap;
+    font-family:ui-monospace,Consolas,monospace; z-index:99; }
+  .errbar.show { opacity:1; }
 </style>
 </head>
 <body>
@@ -232,6 +239,7 @@
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+<div class="errbar" id="errBar"></div>
 
 <script>
   // --- Data: dimuat dari DB lokal via Tauri invoke (offline). ---
@@ -434,6 +442,15 @@
   }
   function closeOv(){ document.getElementById('ov').classList.remove('show'); }
   function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1800); }
+  // tampilkan error sinkron secara persist + log ke console (devtools) biar ketahuan akar masalah.
+  function showErr(t){
+    console.error('[ZPosKasir]', t);
+    const b=document.getElementById('errBar');
+    b.textContent = String(t);
+    b.classList.add('show');
+    clearTimeout(showErr._t);
+    showErr._t = setTimeout(()=>b.classList.remove('show'), 8000);
+  }
   // muat data dari DB lokal (Rust) atau demo (browser preview)
   async function initKasir(){
     if(!isTauri()){
@@ -472,7 +489,7 @@
     toast('Menyinkron...');
     tinv('sync_remote',{baseUrl:base, token})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>toast('Sinkron gagal: '+e));
+      .catch(e=>showErr('Sinkron gagal: '+(e&&e.message?e.message:e)));
   }
   function syncNow(){
     const token=localStorage.getItem('zpos_token');
@@ -481,7 +498,7 @@
     toast('Menyinkron...');
     tinv('sync_remote',{baseUrl:base, token})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>toast('Sinkron gagal: '+e));
+      .catch(e=>showErr('Sinkron gagal: '+(e&&e.message?e.message:e)));
   }
   function simulate(mode){
     // tak lagi dipakai utk offline toggling nyata; tombol wire ke syncNow.
@@ -489,6 +506,7 @@
   }
 
   let syncing=false;
+  let autoErrShown=false; // cuma log auto-sync error SEKALI sampai next sukses (anti-spam 60s)
   // auto-sinkron latar: interval periodik, silent (tanpa toast), guard anti-overlap.
   // cuma jalan kalau kredensial tersimpan; offline (fetch gagal) → skip diam-diam.
   async function autoSync(){
@@ -498,8 +516,12 @@
     syncing=true;
     try{
       await tinv('sync_remote',{baseUrl:base, token});
+      autoErrShown=false;      // sukses → reset, error berikutnya bisa tampil lagi
       await initKasir();
-    }catch(e){ /* offline/gagal → coba lagi di tick berikutnya */ }
+    }catch(e){
+      // tanpa toast (anti-ganggu saat bayar), tapi tetap kelihatan di devtools / errbar sekali.
+      if(!autoErrShown){ autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e)); }
+    }
     finally{ syncing=false; }
   }
 

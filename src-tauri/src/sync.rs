@@ -65,6 +65,19 @@ impl SyncClient {
         format!("{}{}", self.base.trim_end_matches('/'), path)
     }
 
+    // Pesan error diagnosa: status + sampel body server (biar ketahuan 401/404/500 & pesannya).
+    fn err_detail(&self, resp: &reqwest::blocking::Response) -> String {
+        let status = resp.status();
+        let body = match resp.text() {
+            Ok(b) => {
+                let b = b.trim();
+                if b.len() > 300 { format!("{}…", &b[..300]) } else { b.to_string() }
+            }
+            Err(_) => String::new(),
+        };
+        if body.is_empty() { format!("HTTP {status}") } else { format!("HTTP {status}: {body}") }
+    }
+
     // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang
     // dari server dibiarkan (kasir boleh tetap menjual stok lama) — sinkron
     // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
@@ -72,7 +85,7 @@ impl SyncClient {
         let resp = self.http.get(self.endpoint("/api/produk?semua=1"))
             .bearer_auth(&self.token)
             .send().map_err(|e| format!("network: {e}"))?;
-        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        if !resp.status().is_success() { return Err(self.err_detail(&resp)); }
         let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -101,7 +114,7 @@ impl SyncClient {
         let resp = self.http.get(self.endpoint("/api/kategori"))
             .bearer_auth(&self.token)
             .send().map_err(|e| format!("network: {e}"))?;
-        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        if !resp.status().is_success() { return Err(self.err_detail(&resp)); }
         let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -123,7 +136,7 @@ impl SyncClient {
         let resp = self.http.get(self.endpoint("/api/member"))
             .bearer_auth(&self.token)
             .send().map_err(|e| format!("network: {e}"))?;
-        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        if !resp.status().is_success() { return Err(self.err_detail(&resp)); }
         let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -177,7 +190,7 @@ impl SyncClient {
                 conn.execute("DELETE FROM antrian WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
                 pushed += 1;
             } else {
-                return Err(format!("push {client_ref}: HTTP {}", resp.status()));
+                return Err(format!("push {client_ref}: {}", self.err_detail(&resp)));
             }
         }
         Ok(pushed)
