@@ -136,7 +136,7 @@ async fn sync_remote(state: State<'_, AppState>, base_url: String, token: String
     Ok(format!("produk {n_produk}, member {n_member}, push {n_push}"))
 }
 
-fn main() {
+fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -153,4 +153,9 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
+}
+
+// Entrypoint dipanggil dari src/main.rs (binary). Dipisah biar lib.rs dites.
+pub fn run_app() {
+    run();
 }
