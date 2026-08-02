@@ -1,0 +1,154 @@
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize)]
+pub struct RemoteProduk {
+    pub id: i64,
+    pub nama: String,
+    pub harga: i64,
+    #[serde(default)]
+    pub stok: i64,
+    #[serde(default)]
+    pub kategori_id: Option<i64>,
+    #[serde(default)]
+    pub barcode: Option<String>,
+    #[serde(default)]
+    pub foto_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoteMember {
+    pub id: i64,
+    pub nama: String,
+    #[serde(default)]
+    pub telepon: Option<String>,
+    #[serde(default)]
+    pub kategori_member_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PushItem {
+    pub id: i64,
+    pub qty: i64,
+    pub harga: i64,
+}
+
+// Body transaksi yang dikirim ke server ZPos (POST /api/transaksi).
+#[derive(Debug, Serialize)]
+pub struct PushTransaksi {
+    pub client_ref: String,
+    pub metode_bayar: String,
+    pub details: Vec<PushItem>,
+    pub total: i64,
+}
+
+pub struct SyncClient {
+    pub base: String,
+    pub token: String,
+    http: reqwest::Client,
+}
+
+impl SyncClient {
+    pub fn new(base: String, token: String) -> Self {
+        Self { base, token, http: reqwest::Client::new() }
+    }
+
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base.trim_end_matches('/'), path)
+    }
+
+    // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang
+    // dari server dibiarkan (kasir boleh tetap menjual stok lama) — sinkron
+    // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
+    pub async fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/produk?semua=1"))
+            .bearer_auth(&self.token)
+            .send().await.map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        let list: Vec<RemoteProduk> = resp.json().await.map_err(|e| format!("json: {e}"))?;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut st = tx.prepare_cached(
+                "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,foto_url,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7, datetime('now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                   nama=excluded.nama, harga=excluded.harga, stok=excluded.stok,
+                   kategori_id=excluded.kategori_id, barcode=excluded.barcode,
+                   foto_url=excluded.foto_url, updated_at=datetime('now')",
+            ).map_err(|e| e.to_string())?;
+            for p in &list {
+                st.execute((
+                    p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.foto_url,
+                )).map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(list.len())
+    }
+
+    // Member + kategori member dari server → upsert.
+    pub async fn pull_member(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/member"))
+            .bearer_auth(&self.token)
+            .send().await.map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        let list: Vec<RemoteMember> = resp.json().await.map_err(|e| format!("json: {e}"))?;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut st = tx.prepare_cached(
+                "INSERT INTO member (id,nama,telepon,kategori_member_id)
+                 VALUES (?1,?2,?3,?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                   nama=excluded.nama, telepon=excluded.telepon,
+                   kategori_member_id=excluded.kategori_member_id",
+            ).map_err(|e| e.to_string())?;
+            for m in &list {
+                st.execute((m.id, &m.nama, &m.telepon, m.kategori_member_id))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(list.len())
+    }
+
+    // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.
+    // client_ref di server mencegah duplikat jika request pas tiba saat koneksi
+    // terputus (idempotency — cara yang sama dipakai ZPos web).
+    pub async fn push_antrian(&self, conn: &mut Connection) -> Result<usize, String> {
+        type Row = (i64, String, String, String, i64, String); // id, client_ref, produk, metode, total, dibuat_at
+        let rows: Vec<Row> = {
+            let mut st = conn.prepare(
+                "SELECT id, client_ref, produk, metode, total, dibuat_at FROM antrian ORDER BY id",
+            ).map_err(|e| e.to_string())?;
+            let iter = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+                .map_err(|e| e.to_string())?;
+            iter.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        };
+
+        let mut pushed = 0usize;
+        for (id, client_ref, produk, metode, total, _dibuat) in rows {
+            let items: Vec<PushItem> = serde_json::from_str(&produk)
+                .map_err(|e| format!("parse antrian {client_ref}: {e}"))?;
+            let body = PushTransaksi {
+                client_ref,
+                metode_bayar: metode,
+                details: items,
+                total,
+            };
+            let resp = self.http.post(self.endpoint("/api/transaksi"))
+                .bearer_auth(&self.token)
+                .json(&body)
+                .send().await.map_err(|e| format!("network: {e}"))?;
+            // 409 = duplikat (sudah pernah masuk) → anggap sukses, hapus antrian.
+            if resp.status().is_success() || resp.status().as_u16() == 409 {
+                conn.execute("DELETE FROM antrian WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+                pushed += 1;
+            } else {
+                return Err(format!("push {client_ref}: HTTP {}", resp.status()));
+            }
+        }
+        Ok(pushed)
+    }
+}

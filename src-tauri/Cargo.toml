@@ -1,0 +1,26 @@
+[package]
+name = "zpos-kasir"
+version = "0.1.0"
+description = "ZPos Kasir — cashier desktop offline-first (Tauri + SQLite)"
+edition = "2021"
+
+[lib]
+name = "zpos_kasir_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+opt-level = 2
+lto = true

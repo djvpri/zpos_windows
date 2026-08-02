@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZPos Kasir — Mockup Tauri</title>
+<link rel="stylesheet" href="bi/bootstrap-icons.css" />
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI', system-ui, sans-serif; }
+  body { background:#eef1f6; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .phone-wrap { width:100%; max-width:860px; margin:0 auto; }
+  .frame { background:#fff; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.15); overflow:hidden; }
+  /* Header */
+  .hdr { display:flex; align-items:center; gap:12px; padding:12px 16px; background:#1e2f4d; color:#fff; }
+  .hdr .logo { font-weight:800; letter-spacing:.5px; font-size:15px; }
+  .hdr .logo span { color:#7aa7ff; }
+  .conn { display:flex; align-items:center; gap:6px; font-size:12px; padding:4px 10px; border-radius:999px; }
+  .conn.on { background:rgba(34,197,94,.18); color:#7ef0a8; }
+  .conn.off { background:rgba(239,68,68,.18); color:#ff9a9a; }
+  .conn .dot { width:8px; height:8px; border-radius:50%; }
+  .conn.on .dot { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.25); }
+  .conn.off .dot { background:#ef4444; }
+  .hdr .right { margin-left:auto; display:flex; align-items:center; gap:10px; font-size:13px; opacity:.9; }
+  .hdr .ic { width:30px; height:30px; border-radius:8px; background:rgba(255,255,255,.1); display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .hdr .ic i { font-size:17px; line-height:1; }
+  .hdr .ic:hover { background:rgba(255,255,255,.2); }
+  .body { display:grid; grid-template-columns:1fr 340px; min-height:540px; }
+  /* Kiri: produk */
+  .left { border-right:1px solid #eef0f4; padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .search { position:relative; }
+  .search input { width:100%; padding:11px 14px 11px 38px; border:1.5px solid #e2e6ee; border-radius:10px; font-size:14px; outline:none; }
+  .search input:focus { border-color:#4f7cff; }
+  .search::before { content:''; position:absolute; left:12px; top:50%; translate:0 -50%; font-size:14px; color:#9aa3b5; display:flex; }
+  .cats { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
+  .cat { flex-shrink:0; padding:6px 12px; border-radius:999px; background:#f1f3f8; font-size:12px; color:#5a6577; cursor:pointer; border:1px solid transparent; }
+  .cat.on { background:#4f7cff; color:#fff; }
+  .cat:hover { border-color:#c9d4f0; }
+  .grid { flex:1; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:10px; }
+  .card { border:1px solid #edf0f5; border-radius:12px; padding:10px 8px; text-align:center; cursor:pointer; transition:.12s; background:#fff; }
+  .card:hover { border-color:#4f7cff; box-shadow:0 4px 14px rgba(79,124,255,.12); transform:translateY(-1px); }
+  .card:active { transform:scale(.97); }
+  .card .ph { font-size:28px; margin-bottom:6px; color:#1e2f4d; }
+  .card .ph i { font-size:28px; }
+  .card .nm { font-size:11px; color:#3b4658; font-weight:600; line-height:1.2; min-height:26px; }
+  .card .pr { font-size:12px; color:#167430; font-weight:700; margin-top:4px; }
+  .card.low .stk { color:#ef4444; }
+  .stk { font-size:10px; color:#98a2b3; }
+  .foot-left { font-size:11px; color:#8a93a5; display:flex; justify-content:space-between; background:#f7f9fc; border-radius:8px; padding:8px 10px; }
+  /* Kanan: keranjang */
+  .right { display:flex; flex-direction:column; }
+  .tbar { padding:14px 16px 0; font-size:13px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; }
+  .clear { font-size:11px; color:#98a2b3; cursor:pointer; }
+  .clear:hover { color:#ef4444; }
+  .items { flex:1; overflow-y:auto; padding:8px 14px; }
+  .item { display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px dashed #eef0f4; }
+  .item .meta { flex:1; min-width:0; }
+  .item .n { font-size:13px; font-weight:600; color:#2a3548; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .item .p { font-size:11px; color:#98a2b3; }
+  .qty { display:flex; align-items:center; gap:7px; }
+  .qty button { width:22px; height:22px; border-radius:6px; border:1px solid #dde3ee; background:#f7f9fc; cursor:pointer; font-weight:700; color:#4a5670; line-height:1; }
+  .qty button:hover { background:#e9eef8; }
+  .qty span { font-size:13px; font-weight:700; min-width:14px; text-align:center; }
+  .line { font-size:13px; font-weight:700; color:#1e2f4d; width:70px; text-align:right; }
+  .summ { border-top:1px solid #eef0f4; padding:12px 16px; }
+  .row { display:flex; justify-content:space-between; font-size:13px; color:#5a6577; padding:2px 0; }
+  .row.total { font-size:18px; font-weight:800; color:#1e2f4d; padding-top:6px; border-top:1px solid #eef0f4; margin-top:6px; }
+  .paybtns { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:0 16px; }
+  .paybtns button { padding:10px 0; border-radius:10px; border:1.5px solid #dde3ee; background:#fff; font-size:13px; font-weight:600; color:#3b4658; cursor:pointer; transition:.12s; display:flex; align-items:center; justify-content:center; gap:5px; }
+  .paybtns button i { font-size:14px; }
+  .paybtns button:hover { border-color:#4f7cff; color:#4f7cff; }
+  .paybtns button.on { background:#4f7cff; color:#fff; border-color:#4f7cff; }
+  .pay { margin:12px 16px 16px; padding:15px; border-radius:12px; background:linear-gradient(135deg,#123, #1b4a66); color:#fff; font-size:15px; font-weight:700; border:none; cursor:pointer; text-align:center; transition:.15s; }
+  .pay:hover { filter:brightness(1.1); }
+  .pay:active { transform:scale(.98); }
+  .offq { display:flex; align-items:center; gap:8px; margin:0 16px 16px; padding:10px 12px; border-radius:10px; border:1.5px dashed #ffb347; color:#b26a00; background:#fff8ec; font-size:12px; }
+  .offq .n { background:#ffb347; color:#fff; border-radius:999px; padding:1px 8px; font-weight:800; }
+  /* Bar member */
+  .toolrow { display:flex; align-items:center; gap:8px; }
+  .member { position:relative; }
+  .member .pill { display:flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px; border:1.5px solid #e2e6ee; background:#fff; font-size:12px; font-weight:600; color:#3b4658; cursor:pointer; transition:.12s; }
+  .member .pill:hover { border-color:#4f7cff; color:#4f7cff; }
+  .member .pill.on { background:#e7f6ec; border-color:#34a853; color:#1e7d33; }
+  .member .pill i { font-size:14px; }
+  .member .mwin { position:absolute; top:calc(100%+6px); left:0; width:240px; background:#fff; border:1px solid #eef0f4; border-radius:12px; box-shadow:0 12px 34px rgba(0,0,0,.14); z-index:30; display:none; overflow:hidden; }
+  .member .mwin.show { display:block; }
+  .mwin .mhead { padding:10px 12px; font-size:12px; font-weight:700; color:#1e2f4d; background:#f7f9fc; }
+  .mwin .mitem { display:flex; align-items:center; gap:9px; padding:10px 12px; cursor:pointer; font-size:13px; }
+  .mwin .mitem:hover { background:#f3f6fc; }
+  .mwin .mitem i { font-size:14px; color:#4f7cff; }
+  .mwin .mitem .info { flex:1; min-width:0; }
+  .mwin .mitem .info .nm { font-weight:600; color:#2a3548; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mwin .mitem .info .kat { font-size:11px; color:#98a2b3; }
+  .mwin .mitem .tag { font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; }
+  .mwin .tag.hitam { background:#fde8e8; color:#d64545; }
+  .mwin .tag.murah { background:#e7f6ec; color:#1e7d33; }
+  /* Bon gantung */
+  .bon { display:flex; gap:7px; }
+  .bon button { display:flex; align-items:center; gap:6px; padding:7px 12px; border-radius:999px; border:1.5px solid #e2e6ee; background:#fff; font-size:12px; font-weight:600; color:#3b4658; cursor:pointer; transition:.12s; position:relative; }
+  .bon button i { font-size:13px; }
+  .bon button:hover { border-color:#ffb347; color:#b26a00; }
+  .bon button:disabled { opacity:.4; cursor:not-allowed; }
+  .bon .badge { position:absolute; top:-4px; right:-4px; background:#ef4444; color:#fff; font-size:9px; font-weight:800; min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
+  /* harga asli coret */
+  .item .p .gores { text-decoration:line-through; color:#c3c9d6; margin-right:6px; font-size:10px; }
+  .item .p .member-tag { display:inline-block; margin-left:5px; font-size:9px; font-weight:700; color:#1e7d33; background:#e7f6ec; padding:1px 6px; border-radius:999px; }
+  /* modal bon */
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:60; }
+  .modal.show { display:flex; }
+  .modal .mc { background:#fff; border-radius:14px; max-width:420px; width:100%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; }
+  .modal .mch { padding:14px 18px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f0f2f7; }
+  .modal .mch .x { cursor:pointer; color:#98a2b3; }
+  .modal .mch .x:hover { color:#ef4444; }
+  .modal .mcb { padding:14px 18px; overflow-y:auto; }
+  .modal .mcb p { font-size:12px; color:#5a6577; margin-bottom:10px; }
+  .bonRow { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #f2f4f9; }
+  .bonRow:last-child { border-bottom:none; }
+  .bonRow .info { flex:1; min-width:0; }
+  .bonRow .info .nm { font-size:13px; font-weight:600; color:#2a3548; }
+  .bonRow .info .sub { font-size:11px; color:#98a2b3; }
+  .bonRow button { padding:6px 12px; border-radius:8px; border:none; background:#4f7cff; color:#fff; font-size:12px; font-weight:700; cursor:pointer; }
+  .bonRow button:hover { background:#3c63d8; }
+  .bonRow .del { background:none; color:#c3c9d6; padding:6px; margin-left:2px; }
+  .bonRow .del:hover { color:#ef4444; background:none; }
+  .bonRow .st { font-size:10px; font-weight:700; padding:2px 8px; border-radius:999px; }
+  .bonRow .st.bel { background:#fff3dc; color:#b26a00; }
+  .bonRow .st.sel { background:#e7f6ec; color:#1e7d33; }
+  /* overlay offline */
+  .ov { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:50; }
+  .ov.show { display:flex; }
+  .ovcard { background:#fff; border-radius:14px; padding:22px 26px; max-width:340px; text-align:center; }
+  .ovcard h3 { font-size:15px; margin-bottom:6px; color:#1e2f4d; }
+  .ovcard p { font-size:13px; color:#5a6577; line-height:1.5; }
+  .ovcard .big { font-size:44px; margin-bottom:8px; }
+  .ovcard button { margin-top:14px; width:100%; padding:11px; border:none; border-radius:10px; background:#22c55e; color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
+  /* toast */
+  .toast { position:fixed; bottom:24px; left:50%; translate:-50% 0; background:#1e2f4d; color:#fff; padding:11px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 30px rgba(0,0,0,.25); opacity:0; transition:.3s; pointer-events:none; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div class="phone-wrap"><div class="frame">
+
+  <!-- Header -->
+  <div class="hdr">
+    <div class="logo">Z<span>Pos</span> KASIR</div>
+    <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
+    <div class="right">
+      <span id="clock">—</span>
+      <div class="ic" title="Kosongkan"><i class="bi bi-trash3"></i></div>
+      <div class="ic" title="Pengaturan"><i class="bi bi-gear"></i></div>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- Kiri -->
+    <div class="left">
+      <div class="search"><i class="bi bi-search" style="position:absolute;left:12px;top:50%;translate:0 -50%;color:#9aa3b5"></i><input id="q" placeholder="Cari produk..." oninput="render()" /></div>
+      <div class="toolrow">
+        <div class="member">
+          <div class="pill" id="memberPill" onclick="toggleMember()"><i class="bi bi-person-badge"></i><span id="memberPillTxt">Member</span></div>
+          <div class="mwin" id="mwin">
+            <div class="mhead">PILIH MEMBER</div>
+            <div id="mList"></div>
+          </div>
+        </div>
+        <div class="bon">
+          <button onclick="simpanBon()" id="btnSimpanBon" title="Gantung transaksi (butuh member)"><i class="bi bi-bookmark-plus"></i> Gantung</button>
+          <button onclick="bukaBon()" title="Daftar bon gantung"><i class="bi bi-list-ul"></i><span id="bonBadge"></span></button>
+        </div>
+      </div>
+      <div class="cats" id="cats"></div>
+      <div class="grid" id="grid"></div>
+      <div class="foot-left"><span><i class="bi bi-link-45deg"></i> Sepenuhnya offline</span><span>Katalog tersimpan lokal</span></div>
+    </div>
+
+    <!-- Kanan -->
+    <div class="right">
+      <div class="tbar"><span>KERANJANG &nbsp;<span id="cnt"></span></span><span class="clear" onclick="clearCart()">Kosongkan</span></div>
+      <div class="items" id="items"></div>
+      <div class="summ">
+        <div class="row"><span>Subtotal</span><span id="sub">Rp0</span></div>
+        <div class="row"><span>Diskon</span><span id="disc">-Rp0</span></div>
+        <div class="row total"><span>TOTAL</span><span id="total">Rp0</span></div>
+      </div>
+      <div class="paybtns">
+        <button id="mTunai" class="on"><i class="bi bi-cash-coin"></i> Tunai</button>
+        <button id="mQris"><i class="bi bi-qr-code"></i> QRIS</button>
+        <button id="mTrf"><i class="bi bi-bank"></i> Transfer</button>
+      </div>
+      <button class="pay" onclick="bayar()">BAYAR</button>
+      <div class="offq" id="offq"><span class="n" id="offqN">0</span> transaksi offline belum tersinkron
+        <span style="margin-left:auto;font-size:11px;opacity:.7" onclick="simulate('online')"><i class="bi bi-wifi"></i> simulasikan online</span></div>
+    </div>
+  </div>
+</div></div>
+
+<!-- Modal daftar bon gantung -->
+<div class="modal" id="bonModal">
+  <div class="mc">
+    <div class="mch"><span><i class="bi bi-list-ul"></i> Bon Gantung</span><span class="x" onclick="tutupBon()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb" id="bonList"></div>
+  </div>
+</div>
+
+<!-- Overlay transaksi sukses -->
+<div class="ov" id="ov">
+  <div class="ovcard">
+    <div class="big"><i class="bi bi-cart-check" style="font-size:40px;color:#167430"></i></div>
+    <h3>Transaksi selesai!</h3>
+    <p id="ovTxt">Terjual offline, masuk antrian.</p>
+    <button onclick="closeOv()">OK</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  const PRODUK = [
+    {n:'Nasi Goreng',e:'bi-egg-fried',p:15000,s:40,m:17000},{n:'Nasi Ayam',e:'bi-fire',p:18000,s:25,m:20000},{n:'Es Teh',e:'bi-cup-hot',p:5000,s:120},
+    {n:'Es Jeruk',e:'bi-cup-straw',p:7000,s:60},{n:'Kopi Susu',e:'bi-cup',p:12000,s:15,m:10500},{n:'Kentang',e:'bi-basket',p:10000,s:3,m:8500},
+    {n:'Donat',e:'bi-circle-half',p:8000,s:50},{n:'Roti Bakar',e:'bi-sun',p:9000,s:12},{n:'Sosis',e:'bi-egg',p:15000,s:30},
+    {n:'Pudding',e:'bi-box',p:6000,s:0},{n:'Es Krim',e:'bi-thermometer-snow',p:11000,s:22},{n:'Air Mineral',e:'bi-droplet',p:4000,s:200},
+  ];
+  // Member dgn kategori + diskon% kategori. diskon negatif = markup (lebih mahal).
+  // Harga item member = harga_member tetap kalau ada, selain itu harga × (1+diskon/100).
+  const MEMBERS = [
+    {n:'Syahrul', k:'Prioritas', d:0,   tetap:{2:10500,5:8500}},
+    {n:'Bu Rina',  k:'Palapa',    d:-15},                 // markup 15% semua item
+    {n:'Pak Joko', k:'Loyal',     d:10},                  // diskon 10%
+  ];
+  let cart = [];
+  let metode = 'Tunai';
+  let member = null;            // member aktif
+  let offline = true;       // mulai offline (simulasi)
+  let offQtn = 3;           // antrian transaksi tertunda
+  let bon = [];             // daftar bon gantung {nama, items:[{i,q}], total}
+  const CATS = ['Semua','Makanan','Minuman','Snack'];
+
+  // Harga satuan produk utk member aktif (harga tetap menang, lalu diskon/markup %)
+  // d negatif = markup (harga × (1 - d/100) → lebih mahal), d positif = diskon.
+  function hargaMember(idx){
+    if(!member) return null;
+    const p=PRODUK[idx];
+    if(member.tetap && member.tetap[idx] != null) return member.tetap[idx];
+    const d=member.d||0;
+    if(d!==0) return Math.round(p.p*(1 - d/100));
+    return p.p;
+  }
+
+  function fmt(n){ return 'Rp' + n.toLocaleString('id-ID'); }
+  function status(){ 
+    const c=document.getElementById('conn');
+    c.className='conn '+(offline?'off':'on');
+    document.getElementById('connTxt').textContent=offline?'Offline':'Online';
+  }
+  function clock(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
+
+  function render(){
+    const q=document.getElementById('q').value.toLowerCase();
+    const g=document.getElementById('grid');
+    g.innerHTML=PRODUK.filter(p=>p.n.toLowerCase().includes(q)).map((p,i)=>
+      `<div class="card ${p.s<5?'low':''}" onclick="add(${i})">
+        <div class="ph"><i class="bi ${p.e}"></i></div><div class="nm">${p.n}</div>
+        <div class="pr">${fmt(p.p)}</div><div class="stk">stok ${p.s}</div>
+      </div>`).join('');
+  }
+  function add(i){
+    const p=PRODUK[i];
+    const f=cart.find(c=>c.i===i);
+    if(f) f.q++; else cart.push({i,q:1});
+    renderCart();
+  }
+  function renderCart(){
+    document.getElementById('items').innerHTML=cart.map((c,x)=>{
+      const p=PRODUK[c.i];
+      const hm=hargaMember(c.i);
+      const pakai = hm!=null && hm!==p.p;
+      const tampi = pakai ? hm : p.p;
+      return `<div class="item">
+        <div class="meta"><div class="n">${p.n}</div><div class="p">${pakai?`<span class="gores">${fmt(p.p)}</span>`:''}${fmt(tampi)}${pakai?'<span class="member-tag">MEMBER</span>':''}</div></div>
+        <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)">+</button></div>
+        <div class="line">${fmt(tampi*c.q)}</div></div>`;
+    }).join('');
+    const sub=cart.reduce((s,c)=>s+(member&&hargaMember(c.i)!==null&&hargaMember(c.i)!==PRODUK[c.i].p?hargaMember(c.i):PRODUK[c.i].p)*c.q,0);
+    const disc=Math.round(sub*0.09/1000)*1000; // contoh diskon 9%
+    document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
+    document.getElementById('sub').textContent=fmt(sub);
+    document.getElementById('disc').textContent='-'+fmt(disc);
+    document.getElementById('total').textContent=fmt(sub-disc);
+    document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
+    // badge bon aktif
+    const aktif=bon.length;
+    document.getElementById('bonBadge').innerHTML = aktif?`<span class="badge">${aktif}</span>`:'';
+  }
+  function chg(x,d){ const c=cart[x]; c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart(); }
+  function clearCart(){ cart=[]; renderCart(); }
+
+  /* ===== Member ===== */
+  function toggleMember(){ document.getElementById('mwin').classList.toggle('show'); }
+  function renderMemberList(){
+    document.getElementById('mList').innerHTML = MEMBERS.map((m,i)=>{
+      const d=(m.d||0);
+      const tag = d<0 ? `<span class="tag hitam">markup ${-d}%</span>` : d>0 ? `<span class="tag murah">diskon ${d}%</span>` : `<span class="tag murah">harga tetap</span>`;
+      return `<div class="mitem" onclick="pilihMember(${i})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k}</div></div>${tag}</div>`;
+    }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
+  }
+  function pilihMember(i){
+    member=MEMBERS[i];
+    document.getElementById('memberPill').classList.add('on');
+    document.getElementById('memberPillTxt').textContent=member.n+' · '+member.k;
+    document.getElementById('mwin').classList.remove('show');
+    toast('Member: '+member.n);
+    renderCart();
+  }
+  function lepasMember(){
+    member=null;
+    document.getElementById('memberPill').classList.remove('on');
+    document.getElementById('memberPillTxt').textContent='Member';
+    document.getElementById('mwin').classList.remove('show');
+    renderCart();
+  }
+  // klik luar untuk menutup menu member
+  document.addEventListener('click',e=>{ if(!e.target.closest('.member')) document.getElementById('mwin').classList.remove('show'); });
+
+  /* ===== Bon gantung ===== */
+  function simpanBon(){
+    if(!cart.length){ toast('Keranjang kosong'); return; }
+    if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
+    bon.push({ nama: member.n, items: cart.map(c=>({i:c.i,q:c.q})), total: Number(document.getElementById('total').textContent.replace('Rp','').replace(/\./g,'')) });
+    toast('Bon digantung atas nama '+member.n);
+    clearCart();
+  }
+  function bukaBon(){
+    document.getElementById('bonList').innerHTML = bon.length===0
+      ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.</p>`
+      : bon.map((b,x)=>`
+        <div class="bonRow">
+          <i class="bi bi-bookmark" style="color:#ffb347"></i>
+          <div class="info"><div class="nm">${b.nama}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <button onclick="tarikBon(${x})">Tarik</button>
+          <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
+        </div>`).join('');
+    document.getElementById('bonModal').classList.add('show');
+  }
+  function tarikBon(x){
+    const b=bon[x];
+    cart = b.items.map(it=>({i:it.i,q:it.q}));
+    bon.splice(x,1);
+    document.getElementById('bonModal').classList.remove('show');
+    toast('Bon ditarik');
+    renderCart();
+  }
+  function hapusBon(x){ bon.splice(x,1); bukaBon(); renderCart(); }
+  function tutupBon(){ document.getElementById('bonModal').classList.remove('show'); }
+  document.getElementById('bonModal').addEventListener('click',e=>{ if(e.target.id==='bonModal') tutupBon(); });
+
+  function bayar(){
+    if(!cart.length){ toast('Keranjang kosong'); return; }
+    if(offline) offQtn++; else offQtn=0;
+    document.getElementById('offqN').textContent=offQtn;
+    document.getElementById('ovTxt').innerHTML = offline
+      ? `Rp<b>${document.getElementById('total').textContent.replace('Rp','')}</b> tersimpan lokal ke antrian.<br>Auto-sinkron saat online.`
+      : 'Terbayar <b>'+metode+'</b>. Terkirim ke server.';
+    document.getElementById('ov').classList.add('show');
+    clearCart();
+  }
+  function closeOv(){ document.getElementById('ov').classList.remove('show'); }
+  function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1800); }
+  function simulate(mode){
+    offline = mode!=='online';
+    if(mode==='online' && offQtn>0){ toast('Sinkron: '+offQtn+' transaksi terkirim'); offQtn=0; }
+    document.getElementById('offqN').textContent=offQtn;
+    status(); renderCart();
+  }
+  document.querySelectorAll('.paybtns button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.paybtns button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); metode=b.textContent.trim();
+  });
+  // kategori
+  document.getElementById('cats').innerHTML=CATS.map((c,i)=>`<div class="cat ${i===0?'on':''}">${c}</div>`).join('');
+  document.querySelectorAll('.cat').forEach(c=>c.onclick=()=>{
+    document.querySelectorAll('.cat').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+  });
+  status(); clock(); setInterval(clock,10000); render(); renderCart(); renderMemberList();
+</script>
+</body>
+</html>
