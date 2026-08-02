@@ -141,6 +141,8 @@
   /* toast */
   .toast { position:fixed; bottom:24px; left:50%; translate:-50% 0; background:#1e2f4d; color:#fff; padding:11px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 30px rgba(0,0,0,.25); opacity:0; transition:.3s; pointer-events:none; }
   .toast.show { opacity:1; }
+  /* badge versi — konstan di pojok, bukti exe yg jalan memuat index.html ini */
+  .verbadge { position:fixed; right:8px; bottom:4px; font-size:10px; color:#c3ccdb; background:rgba(255,255,255,.85); border-radius:6px; padding:2px 7px; z-index:9; pointer-events:none; font-family:Arial,Helvetica,sans-serif; }
   /* bar error sinkron — persisten, biar ketahuan salahnya (bukan toast ilang 1.8s) */
   .errbar { position:fixed; bottom:64px; left:50%; translate:-50% 0; max-width:88vw;
     background:#7f1d1d; color:#ffe4e6; padding:10px 14px; border-radius:10px;
@@ -241,6 +243,7 @@
 <div class="toast" id="toast"></div>
 <div class="errbar" id="errBar"></div>
 
+<div class="verbadge" id="verBadge">v0.1.1</div>
 <script>
   // --- Data: dimuat dari DB lokal via Tauri invoke (offline). ---
   // Diluar Tauri (browser preview) dipakai data demo supaya layar tetap kebayang.
