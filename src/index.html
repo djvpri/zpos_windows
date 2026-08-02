@@ -280,7 +280,11 @@
     if(!t) throw new Error('__no_tauri__');
     return t.invoke(cmd,args||{});
   }
-  const isTauri = () => !!(window.__TAURI__?.core);
+  // stopgap: `var` (bukan const) biar SyntaxError 'isTauri already declared' TIDAK
+  // mematikan script ketika WebView2 cache menyuntik dua <script> (HTML lama + baru).
+  // `var` mengizinkan re-declare (idempotent) di scope yang sama. Akar = cache basi:
+  // hapus %APPDATA%\*zpos.kasir.app* lalu jalankan exe terbaru. ponytail: kode owner.
+  var isTauri = function(){ return !!(window.__TAURI__?.core); };
 
   // Buka DevTools webview (tombol di badge versi). Di browser biasa no-op.
   function bukaDevtools(){ if(isTauri()) tinv('buka_devtools').catch(()=>{}); }
