@@ -21,17 +21,17 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Cargo check (diagnosa compile, sebelum bundling)
-        working-directory: src-tauri
-        run: cargo check 2>&1 | tail -40
-
       - name: Build .exe (release)
         working-directory: src-tauri
-        run: cargo tauri build
+        # --no-bundle: hasilkan biner .exe portable langsung (skip MSI/NSIS
+        # bundler yang butuh toolchain WiX/NSIS — sering gagal di runner Windows).
+        # `ponytail:` installer (MSI/NSIS) = beri `bundle.targets` wix/nsis utk Tauri
+        # di masa mendatang setelah webview biner terverifikasi.
+        run: cargo tauri build --no-bundle
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zpos-kasir-windows
-          path: src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: warn
+          name: zpos-kasir-windows-exe
+          path: src-tauri/target/release/*.exe
+          if-no-files-found: error
