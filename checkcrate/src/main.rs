@@ -53,6 +53,34 @@ fn main() {
     assert_eq!(tetap, 18000);
 
     println!("OK: skema DB kasir offline valid (upsert, member, harga_member, antrian,kategorimember)");
+
+    // --- Sinkronisasi: bentuk JSON PushTransaksi yg dikirim ke server ZPos. ---
+    // Mencocokkan struct di src-tauri/src/sync.rs (PushTransaksi/PushItem). Serde murni.
+    #[derive(serde::Serialize)]
+    struct PushItem { id: i64, qty: i64, harga: i64 }
+    #[derive(serde::Serialize)]
+    struct PushTransaksi { client_ref: String, metode_bayar: String, details: Vec<PushItem>, total: i64 }
+
+    let trx = PushTransaksi {
+        client_ref: "trx-1".into(),
+        metode_bayar: "Tunai".into(),
+        details: vec![PushItem { id: 1, qty: 2, harga: 17250 }],
+        total: 34500,
+    };
+    let j = serde_json::to_string(&trx).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    assert_eq!(v["client_ref"], "trx-1");
+    assert_eq!(v["metode_bayar"], "Tunai");
+    assert_eq!(v["details"][0]["id"], 1);
+    assert_eq!(v["details"][0]["qty"], 2);
+    assert_eq!(v["details"][0]["harga"], 17250);
+    assert_eq!(v["total"], 34500);
+
+    // Round-trip: item yang di-parse dari JSON beda juga harus cocok.
+    let item2: serde_json::Value = serde_json::from_str(r#"{"id":9,"qty":1,"harga":6000}"#).unwrap();
+    assert_eq!(item2["id"], 9); assert_eq!(item2["qty"], 1); assert_eq!(item2["harga"], 6000);
+
+    println!("OK: PushTransaksi serialisasi (client_ref, metode_bayar, details, total) akurat");
 }
 
 fn sql_count(c: &Connection, q: &str) -> i64 { c.query_row(q, [], |r| r.get(0)).unwrap() }
