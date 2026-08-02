@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Manager, State, WebviewWindowExt};
 
 // ---------- state ----------
 pub struct AppState {
@@ -144,8 +144,8 @@ fn sync_remote(state: State<AppState>, base_url: String, token: String) -> Resul
 // Dipanggil via tombol dikit di badge versi; hindari ketergantungan shortcut
 // Ctrl+Shift+I yg di Tauri v2 kadang tak aktif meski devtools=true.
 #[tauri::command]
-fn buka_devtools(window: tauri::Window) {
-    let _ = window.open_devtools();
+fn buka_devtools(win: tauri::WebviewWindow) {
+    let _ = win.open_devtools();
 }
 
 fn run() {
