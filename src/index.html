@@ -488,6 +488,21 @@
     if(mode==='online' && offQtn>0){ toast('Antrian '+offQtn+' akan dikirim saat sinkron'); }
   }
 
+  let syncing=false;
+  // auto-sinkron latar: interval periodik, silent (tanpa toast), guard anti-overlap.
+  // cuma jalan kalau kredensial tersimpan; offline (fetch gagal) → skip diam-diam.
+  async function autoSync(){
+    const token=localStorage.getItem('zpos_token');
+    const base=localStorage.getItem('zpos_base');
+    if(!token || !base || syncing || !isTauri()) return;
+    syncing=true;
+    try{
+      await tinv('sync_remote',{baseUrl:base, token});
+      await initKasir();
+    }catch(e){ /* offline/gagal → coba lagi di tick berikutnya */ }
+    finally{ syncing=false; }
+  }
+
   document.querySelectorAll('.paybtns button').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('.paybtns button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); metode=b.textContent.trim();
@@ -503,6 +518,7 @@
   document.getElementById('setBtn')?.addEventListener('click',saveSet);
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status(); clock(); setInterval(clock,10000);
+  setInterval(autoSync,60000);   // auto-sinkron (produk/member/antrian) tiap 60s saat online
   initKasir();
 </script>
 </body>
