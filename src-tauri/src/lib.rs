@@ -125,17 +125,17 @@ fn jumlah_antrian(state: State<AppState>) -> Result<i64, String> {
 
 // Panggil sinkron: tarik katalog+member, lalu kirim antrian. Butuh base_url + token.
 #[tauri::command]
-async fn sync_remote(state: State<'_, AppState>, base_url: String, token: String) -> Result<String, String> {
-    // Susun client sementara (token dikirim tiap sync, tak disimpan lama di memori).
+fn sync_remote(state: State<AppState>, base_url: String, token: String) -> Result<String, String> {
+    // Command non-async → Tauri jalankan di worker thread. Guard Mutex boleh
+    // ditahan (no await lintas), jadi tak ada masalah Send. Request pakai
+    // reqwest::blocking (lihat Cargo.toml: fitur "blocking").
     let c = sync::SyncClient::new(base_url, token);
-
-    // Ambil koneksi DB sebagai &mut. Dibutuhkan oleh semua method sync.
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
 
-    let n_produk = c.pull_produk(conn).await?;
-    let n_member = c.pull_member(conn).await?;
-    let n_push = c.push_antrian(conn).await?;
+    let n_produk = c.pull_produk(conn)?;
+    let n_member = c.pull_member(conn)?;
+    let n_push = c.push_antrian(conn)?;
     Ok(format!("produk {n_produk}, member {n_member}, push {n_push}"))
 }
 

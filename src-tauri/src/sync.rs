@@ -26,7 +26,7 @@ pub struct RemoteMember {
     pub kategori_member_id: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct PushItem {
     pub id: i64,
     pub qty: i64,
@@ -45,12 +45,14 @@ pub struct PushTransaksi {
 pub struct SyncClient {
     pub base: String,
     pub token: String,
-    http: reqwest::Client,
+    // blocking: sync_remote dijalankan Tauri di worker thread (command non-async),
+    // jadi tak ada guard Mutex tersangkut lintas `.await` → future tetap Send.
+    http: reqwest::blocking::Client,
 }
 
 impl SyncClient {
     pub fn new(base: String, token: String) -> Self {
-        Self { base, token, http: reqwest::Client::new() }
+        Self { base, token, http: reqwest::blocking::Client::new() }
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -60,12 +62,12 @@ impl SyncClient {
     // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang
     // dari server dibiarkan (kasir boleh tetap menjual stok lama) — sinkron
     // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
-    pub async fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
+    pub fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/produk?semua=1"))
             .bearer_auth(&self.token)
-            .send().await.map_err(|e| format!("network: {e}"))?;
+            .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
-        let list: Vec<RemoteProduk> = resp.json().await.map_err(|e| format!("json: {e}"))?;
+        let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -88,12 +90,12 @@ impl SyncClient {
     }
 
     // Member + kategori member dari server → upsert.
-    pub async fn pull_member(&self, conn: &mut Connection) -> Result<usize, String> {
+    pub fn pull_member(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/member"))
             .bearer_auth(&self.token)
-            .send().await.map_err(|e| format!("network: {e}"))?;
+            .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
-        let list: Vec<RemoteMember> = resp.json().await.map_err(|e| format!("json: {e}"))?;
+        let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -116,7 +118,7 @@ impl SyncClient {
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.
     // client_ref di server mencegah duplikat jika request pas tiba saat koneksi
     // terputus (idempotency — cara yang sama dipakai ZPos web).
-    pub async fn push_antrian(&self, conn: &mut Connection) -> Result<usize, String> {
+    pub fn push_antrian(&self, conn: &mut Connection) -> Result<usize, String> {
         type Row = (i64, String, String, String, i64, String); // id, client_ref, produk, metode, total, dibuat_at
         let rows: Vec<Row> = {
             let mut st = conn.prepare(
@@ -140,7 +142,7 @@ impl SyncClient {
             let resp = self.http.post(self.endpoint("/api/transaksi"))
                 .bearer_auth(&self.token)
                 .json(&body)
-                .send().await.map_err(|e| format!("network: {e}"))?;
+                .send().map_err(|e| format!("network: {e}"))?;
             // 409 = duplikat (sudah pernah masuk) → anggap sukses, hapus antrian.
             if resp.status().is_success() || resp.status().as_u16() == 409 {
                 conn.execute("DELETE FROM antrian WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
