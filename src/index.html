@@ -112,6 +112,12 @@
   .modal .mch .x:hover { color:#ef4444; }
   .modal .mcb { padding:14px 18px; overflow-y:auto; }
   .modal .mcb p { font-size:12px; color:#5a6577; margin-bottom:10px; }
+  .fld { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+  .fld label { font-size:12px; color:#5a6577; font-weight:600; }
+  .fld input { padding:10px 12px; border:1.5px solid #e2e6ee; border-radius:10px; font-size:13px; outline:none; width:100%; }
+  .fld input:focus { border-color:#4f7cff; }
+  .sbtn { width:100%; padding:11px; border:none; border-radius:10px; background:#4f7cff; color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
+  .sbtn:hover { filter:brightness(1.08); }
   .bonRow { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #f2f4f9; }
   .bonRow:last-child { border-bottom:none; }
   .bonRow .info { flex:1; min-width:0; }
@@ -199,6 +205,18 @@
   <div class="mc">
     <div class="mch"><span><i class="bi bi-list-ul"></i> Bon Gantung</span><span class="x" onclick="tutupBon()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb" id="bonList"></div>
+  </div>
+</div>
+
+<!-- Modal setelan sinkron -->
+<div class="modal" id="setModal">
+  <div class="mc">
+    <div class="mch"><span><i class="bi bi-gear"></i> Sinkron ke Server ZPos</span><span class="x" onclick="tutupSet()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div class="fld"><label>Base URL server ZPos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
+      <div class="fld"><label>Token toko (JWT dari ZPos web)</label><input id="setToken" placeholder="masukkan token autentikasi" /></div>
+      <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
+    </div>
   </div>
 </div>
 
@@ -402,7 +420,7 @@
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
       PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:'bi-box', k:x.kategori_id}));
-      MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id}));
+      MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
@@ -411,18 +429,35 @@
   function renderOffQ(){ document.getElementById('offqN').textContent=offQtn; }
 
   // sinkron manual: tarik katalog/member dari server ZPos + push antrian.
-  // butuh konfigurasi base_url + token (disimpan user di setelan pertama).
-  async function syncNow(){
-    const base=prompt('Base URL server ZPos (mis. https://zpos.zomet.my.id)','https://zpos.zomet.my.id');
-    if(!base) return;
-    const token=prompt('Token/JWT toko (dari ZPos web, masukkan token autentikasi)');
-    if(token===null) return;
+  // base_url + token disimpan di localStorage, diisi via modal setelan
+  // (window.prompt diblokir di WebView2 Tauri — makanya pakai modal).
+  function openSet(){
+    document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
+    document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
+    document.getElementById('setModal').classList.add('show');
+    setTimeout(()=>document.getElementById('setToken').focus(),60);
+  }
+  function tutupSet(){ document.getElementById('setModal').classList.remove('show'); }
+  function saveSet(){
+    const base=document.getElementById('setUrl').value.trim();
+    const token=document.getElementById('setToken').value.trim();
+    if(!base){ toast('Base URL wajib diisi'); return; }
+    localStorage.setItem('zpos_base', base);
+    localStorage.setItem('zpos_token', token);
+    tutupSet();
     toast('Menyinkron...');
-    try{
-      const r=await tinv('sync_remote',{baseUrl:base, token});
-      toast('Sinkron OK: '+r);
-      await initKasir();
-    }catch(e){ toast('Sinkron gagal: '+e); }
+    tinv('sync_remote',{baseUrl:base, token})
+      .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
+      .catch(e=>toast('Sinkron gagal: '+e));
+  }
+  function syncNow(){
+    const token=localStorage.getItem('zpos_token');
+    const base=localStorage.getItem('zpos_base');
+    if(!token || !base){ openSet(); return; }
+    toast('Menyinkron...');
+    tinv('sync_remote',{baseUrl:base, token})
+      .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
+      .catch(e=>toast('Sinkron gagal: '+e));
   }
   function simulate(mode){
     // tak lagi dipakai utk offline toggling nyata; tombol wire ke syncNow.
@@ -440,6 +475,8 @@
   });
   // pill connector → tombol sinkron manual
   document.getElementById('simOnline')?.addEventListener('click',()=>syncNow());
+  document.getElementById('setBtn')?.addEventListener('click',saveSet);
+  document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status(); clock(); setInterval(clock,10000);
   initKasir();
 </script>
