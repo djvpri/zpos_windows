@@ -21,6 +21,10 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      - name: Cargo check (diagnosa compile, sebelum bundling)
+        working-directory: src-tauri
+        run: cargo check 2>&1 | tail -40
+
       - name: Build .exe (release)
         working-directory: src-tauri
         run: cargo tauri build
