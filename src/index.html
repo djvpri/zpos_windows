@@ -260,7 +260,8 @@
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, total}
-  const CATS = ['Semua','Makanan','Minuman','Snack'];
+  let CATS = ['Semua'];            // diisi dinamis dari kategori produk (initKasir)
+  let curCat = 'Semua';
 
   // invoke helper — Tauri v2. Di browser biasa fallback data demo biar mockup tetap kebayang.
   async function tinv(cmd,args){
@@ -278,6 +279,19 @@
   }
 
   function fmt(n){ return 'Rp' + n.toLocaleString('id-ID'); }
+  // Ikon produk dipilih dari nama kategori (Bootstrap Icons). Match kata kunci
+  // lowercase; tak cocok → kotak umum. `ponytail:` mapping penuh per kategori by
+  // emoji di ZPos web bila perlu.
+  function ikonKategori(n){
+    const s=(n||'').toLowerCase();
+    if(/makan|goreng|nasi|ayam|soto|bakso|mie/.test(s)) return 'bi-egg-fried';
+    if(/minum|es |teh|kopi|jus|susu|air|soda/.test(s)) return 'bi-cup-straw';
+    if(/snack|keripik|camilan|roti|donat|cemilan/.test(s)) return 'bi-basket';
+    if(/ring|emas|perhiasan/.test(s)) return 'bi-gem';
+    if(/sembako|beras|minyak|gula|indomie|mie instan/.test(s)) return 'bi-box-seam';
+    if(/alat|kosmetik|pribadi|pampers/.test(s)) return 'bi-basket2';
+    return 'bi-box';
+  }
   function status(){ 
     const c=document.getElementById('conn');
     c.className='conn '+(offline?'off':'on');
@@ -285,10 +299,20 @@
   }
   function clock(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
 
+  function buildCats(){
+    CATS = ['Semua'].concat([...new Set(PRODUK.map(p=>p.k).filter(Boolean))]);
+    if(curCat!=='Semua' && !CATS.includes(curCat)) curCat='Semua';
+    document.getElementById('cats').innerHTML=CATS.map(c=>`<div class="cat ${c===curCat?'on':''}">${c}</div>`).join('');
+    document.querySelectorAll('.cat').forEach(c=>c.onclick=()=>{
+      document.querySelectorAll('.cat').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+      curCat=c.textContent.trim(); render();
+    });
+  }
+
   function render(){
     const q=document.getElementById('q').value.toLowerCase();
     const g=document.getElementById('grid');
-    g.innerHTML=PRODUK.filter(p=>p.n.toLowerCase().includes(q)).map(p=>
+    g.innerHTML=PRODUK.filter(p=>(curCat==='Semua' || p.k===curCat) && p.n.toLowerCase().includes(q)).map(p=>
       `<div class="card ${p.s<5?'low':''}" onclick="add(${p.id})">
         <div class="ph"><i class="bi ${p.e||'bi-box'}"></i></div><div class="nm">${p.n}</div>
         <div class="pr">${fmt(p.p)}</div><div class="stk">stok ${p.s}</div>
@@ -414,17 +438,17 @@
   async function initKasir(){
     if(!isTauri()){
       PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; offQtn=2;
-      status(); render(); renderCart(); renderMemberList(); renderOffQ(); return;
+      status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); return;
     }
     try{
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
-      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:'bi-box', k:x.kategori_id}));
+      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id}));
       MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
-    status(); render(); renderCart(); renderMemberList(); renderOffQ();
+    status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ();
   }
   function renderOffQ(){ document.getElementById('offqN').textContent=offQtn; }
 
@@ -468,10 +492,11 @@
     document.querySelectorAll('.paybtns button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); metode=b.textContent.trim();
   });
-  // kategori
-  document.getElementById('cats').innerHTML=CATS.map((c,i)=>`<div class="cat ${i===0?'on':''}">${c}</div>`).join('');
+  // kategori (filter dinamis dari kategori produk)
+  document.getElementById('cats').innerHTML=CATS.map(c=>`<div class="cat ${c===curCat?'on':''}">${c}</div>`).join('');
   document.querySelectorAll('.cat').forEach(c=>c.onclick=()=>{
     document.querySelectorAll('.cat').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+    curCat=c.textContent.trim(); render();
   });
   // pill connector → tombol sinkron manual
   document.getElementById('simOnline')?.addEventListener('click',()=>syncNow());

@@ -17,6 +17,12 @@ pub struct RemoteProduk {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RemoteKategori {
+    pub id: i64,
+    pub nama: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RemoteMember {
     pub id: i64,
     pub nama: String,
@@ -83,6 +89,29 @@ impl SyncClient {
                 st.execute((
                     p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.foto_url,
                 )).map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(list.len())
+    }
+
+    // Kategori produk dari server → upsert (id, nama). Dipakai list_produk utk
+    // join nama kategori → frontend tampilkan ikon & filter kategori.
+    pub fn pull_kategori(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/kategori"))
+            .bearer_auth(&self.token)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(format!("HTTP {}", resp.status())); }
+        let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json: {e}"))?;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut st = tx.prepare_cached(
+                "INSERT INTO kategori (id,nama) VALUES (?1,?2)
+                 ON CONFLICT(id) DO UPDATE SET nama=excluded.nama",
+            ).map_err(|e| e.to_string())?;
+            for k in &list {
+                st.execute((k.id, &k.nama)).map_err(|e| e.to_string())?;
             }
         }
         tx.commit().map_err(|e| e.to_string())?;
