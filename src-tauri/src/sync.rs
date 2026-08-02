@@ -134,7 +134,7 @@ impl SyncClient {
             let items: Vec<PushItem> = serde_json::from_str(&produk)
                 .map_err(|e| format!("parse antrian {client_ref}: {e}"))?;
             let body = PushTransaksi {
-                client_ref,
+                client_ref: client_ref.clone(),
                 metode_bayar: metode,
                 details: items,
                 total,
