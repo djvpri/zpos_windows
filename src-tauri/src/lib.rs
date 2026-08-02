@@ -140,6 +140,14 @@ fn sync_remote(state: State<AppState>, base_url: String, token: String) -> Resul
     Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, push {n_push}"))
 }
 
+// Buka DevTools (window webview) — utk diagnosa langsung dari UI.
+// Dipanggil via tombol dikit di badge versi; hindari ketergantungan shortcut
+// Ctrl+Shift+I yg di Tauri v2 kadang tak aktif meski devtools=true.
+#[tauri::command]
+fn buka_devtools(window: tauri::Window) {
+    let _ = window.open_devtools();
+}
+
 fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -153,7 +161,7 @@ fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
-            antri_transaksi, jumlah_antrian, sync_remote
+            antri_transaksi, jumlah_antrian, sync_remote, buka_devtools
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
