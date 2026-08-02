@@ -189,7 +189,7 @@
       </div>
       <button class="pay" onclick="bayar()">BAYAR</button>
       <div class="offq" id="offq"><span class="n" id="offqN">0</span> transaksi offline belum tersinkron
-        <span style="margin-left:auto;font-size:11px;opacity:.7" onclick="simulate('online')"><i class="bi bi-wifi"></i> simulasikan online</span></div>
+        <span id="simOnline" style="margin-left:auto;font-size:11px;opacity:.7"><i class="bi bi-arrow-repeat"></i> Sinkronkan</span></div>
     </div>
   </div>
 </div></div>
@@ -216,36 +216,47 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  const PRODUK = [
-    {n:'Nasi Goreng',e:'bi-egg-fried',p:15000,s:40,m:17000},{n:'Nasi Ayam',e:'bi-fire',p:18000,s:25,m:20000},{n:'Es Teh',e:'bi-cup-hot',p:5000,s:120},
-    {n:'Es Jeruk',e:'bi-cup-straw',p:7000,s:60},{n:'Kopi Susu',e:'bi-cup',p:12000,s:15,m:10500},{n:'Kentang',e:'bi-basket',p:10000,s:3,m:8500},
-    {n:'Donat',e:'bi-circle-half',p:8000,s:50},{n:'Roti Bakar',e:'bi-sun',p:9000,s:12},{n:'Sosis',e:'bi-egg',p:15000,s:30},
-    {n:'Pudding',e:'bi-box',p:6000,s:0},{n:'Es Krim',e:'bi-thermometer-snow',p:11000,s:22},{n:'Air Mineral',e:'bi-droplet',p:4000,s:200},
+  // --- Data: dimuat dari DB lokal via Tauri invoke (offline). ---
+  // Diluar Tauri (browser preview) dipakai data demo supaya layar tetap kebayang.
+  let PRODUK = [];
+  let MEMBERS = [];
+  let merchantHub = null; // {token, base_url, ...}
+
+  const DEMO_PRODUK = [
+    {id:1,n:'Nasi Goreng',e:'bi-egg-fried',p:15000,s:40},{id:2,n:'Nasi Ayam',e:'bi-fire',p:18000,s:25},{id:3,n:'Es Teh',e:'bi-cup-hot',p:5000,s:120},
+    {id:4,n:'Es Jeruk',e:'bi-cup-straw',p:7000,s:60},{id:5,n:'Kopi Susu',e:'bi-cup',p:12000,s:15},{id:6,n:'Kentang',e:'bi-basket',p:10000,s:3},
+    {id:7,n:'Donat',e:'bi-circle-half',p:8000,s:50},{id:8,n:'Roti Bakar',e:'bi-sun',p:9000,s:12},{id:9,n:'Sosis',e:'bi-egg',p:15000,s:30},
+    {id:10,n:'Pudding',e:'bi-box',p:6000,s:0},{id:11,n:'Es Krim',e:'bi-thermometer-snow',p:11000,s:22},{id:12,n:'Air Mineral',e:'bi-droplet',p:4000,s:200},
   ];
-  // Member dgn kategori + diskon% kategori. diskon negatif = markup (lebih mahal).
-  // Harga item member = harga_member tetap kalau ada, selain itu harga × (1+diskon/100).
-  const MEMBERS = [
-    {n:'Syahrul', k:'Prioritas', d:0,   tetap:{2:10500,5:8500}},
-    {n:'Bu Rina',  k:'Palapa',    d:-15},                 // markup 15% semua item
-    {n:'Pak Joko', k:'Loyal',     d:10},                  // diskon 10%
+  const DEMO_MEMBERS = [
+    {id:1,n:'Syahrul', k:'Prioritas', d:0, tetap:{2:10500,5:8500}},
+    {id:2,n:'Bu Rina',  k:'Palapa',    d:-15},
+    {id:3,n:'Pak Joko', k:'Loyal',     d:10},
   ];
+  const DEMO_HARGA = { 2: {1:10500,5:8500}, 3: {}, 5: {} }; // {memberId:{produkId:harga}} utk demo
+
   let cart = [];
   let metode = 'Tunai';
-  let member = null;            // member aktif
-  let offline = true;       // mulai offline (simulasi)
-  let offQtn = 3;           // antrian transaksi tertunda
-  let bon = [];             // daftar bon gantung {nama, items:[{i,q}], total}
+  let member = null;         // member aktif (obj member)
+  let hargaMap = {};         // {produkId: hargaEfektif} utk member aktif
+  let offline = true;        // status koneksi offline (kasir utama = offline-first)
+  let offQtn = 0;            // jumlah antrian transaksi offline
+  let bon = [];              // bon gantung {nama, total}
   const CATS = ['Semua','Makanan','Minuman','Snack'];
 
-  // Harga satuan produk utk member aktif (harga tetap menang, lalu diskon/markup %)
-  // d negatif = markup (harga × (1 - d/100) → lebih mahal), d positif = diskon.
-  function hargaMember(idx){
+  // invoke helper — Tauri v2. Di browser biasa fallback data demo biar mockup tetap kebayang.
+  async function tinv(cmd,args){
+    const t=window.__TAURI__?.core;
+    if(!t) throw new Error('__no_tauri__');
+    return t.invoke(cmd,args||{});
+  }
+  const isTauri = () => !!(window.__TAURI__?.core);
+
+  // Harga satuan produk utk member aktif (dari hargaMap yg dihitung Rust).
+  function hargaMember(id){
     if(!member) return null;
-    const p=PRODUK[idx];
-    if(member.tetap && member.tetap[idx] != null) return member.tetap[idx];
-    const d=member.d||0;
-    if(d!==0) return Math.round(p.p*(1 - d/100));
-    return p.p;
+    if(hargaMap[id] != null) return hargaMap[id];
+    const p=PRODUK.find(p=>p.id===id); return p?p.p:null;
   }
 
   function fmt(n){ return 'Rp' + n.toLocaleString('id-ID'); }
@@ -259,22 +270,22 @@
   function render(){
     const q=document.getElementById('q').value.toLowerCase();
     const g=document.getElementById('grid');
-    g.innerHTML=PRODUK.filter(p=>p.n.toLowerCase().includes(q)).map((p,i)=>
-      `<div class="card ${p.s<5?'low':''}" onclick="add(${i})">
-        <div class="ph"><i class="bi ${p.e}"></i></div><div class="nm">${p.n}</div>
+    g.innerHTML=PRODUK.filter(p=>p.n.toLowerCase().includes(q)).map(p=>
+      `<div class="card ${p.s<5?'low':''}" onclick="add(${p.id})">
+        <div class="ph"><i class="bi ${p.e||'bi-box'}"></i></div><div class="nm">${p.n}</div>
         <div class="pr">${fmt(p.p)}</div><div class="stk">stok ${p.s}</div>
       </div>`).join('');
   }
-  function add(i){
-    const p=PRODUK[i];
-    const f=cart.find(c=>c.i===i);
-    if(f) f.q++; else cart.push({i,q:1});
+  function add(id){
+    const f=cart.find(c=>c.id===id);
+    if(f) f.q++; else cart.push({id,q:1});
     renderCart();
   }
   function renderCart(){
     document.getElementById('items').innerHTML=cart.map((c,x)=>{
-      const p=PRODUK[c.i];
-      const hm=hargaMember(c.i);
+      const p=PRODUK.find(p=>p.id===c.id);
+      if(!p) return '';
+      const hm=hargaMember(c.id);
       const pakai = hm!=null && hm!==p.p;
       const tampi = pakai ? hm : p.p;
       return `<div class="item">
@@ -282,14 +293,13 @@
         <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)">+</button></div>
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
-    const sub=cart.reduce((s,c)=>s+(member&&hargaMember(c.i)!==null&&hargaMember(c.i)!==PRODUK[c.i].p?hargaMember(c.i):PRODUK[c.i].p)*c.q,0);
+    const sub=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=Math.round(sub*0.09/1000)*1000; // contoh diskon 9%
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
     document.getElementById('disc').textContent='-'+fmt(disc);
     document.getElementById('total').textContent=fmt(sub-disc);
     document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
-    // badge bon aktif
     const aktif=bon.length;
     document.getElementById('bonBadge').innerHTML = aktif?`<span class="badge">${aktif}</span>`:'';
   }
@@ -299,22 +309,30 @@
   /* ===== Member ===== */
   function toggleMember(){ document.getElementById('mwin').classList.toggle('show'); }
   function renderMemberList(){
-    document.getElementById('mList').innerHTML = MEMBERS.map((m,i)=>{
+    document.getElementById('mList').innerHTML = MEMBERS.map(m=>{
       const d=(m.d||0);
       const tag = d<0 ? `<span class="tag hitam">markup ${-d}%</span>` : d>0 ? `<span class="tag murah">diskon ${d}%</span>` : `<span class="tag murah">harga tetap</span>`;
-      return `<div class="mitem" onclick="pilihMember(${i})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k}</div></div>${tag}</div>`;
+      return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
     }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
   }
-  function pilihMember(i){
-    member=MEMBERS[i];
+  async function pilihMember(id){
+    const m=MEMBERS.find(m=>m.id===id); if(!m) return;
+    // Harga efektif member dihitung backend (Rust). Demo fallback pakai peta statis.
+    if(isTauri()){
+      try { hargaMap = await tinv('harga_member',{memberId:id}); }
+      catch(e){ hargaMap={}; toast('Gagal muat harga member'); }
+    } else {
+      hargaMap = DEMO_HARGA[id] || {};
+    }
+    member=m;
     document.getElementById('memberPill').classList.add('on');
-    document.getElementById('memberPillTxt').textContent=member.n+' · '+member.k;
+    document.getElementById('memberPillTxt').textContent=m.n+' · '+(m.k||'Member');
     document.getElementById('mwin').classList.remove('show');
-    toast('Member: '+member.n);
+    toast('Member: '+m.n);
     renderCart();
   }
   function lepasMember(){
-    member=null;
+    member=null; hargaMap={};
     document.getElementById('memberPill').classList.remove('on');
     document.getElementById('memberPillTxt').textContent='Member';
     document.getElementById('mwin').classList.remove('show');
@@ -327,7 +345,7 @@
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
-    bon.push({ nama: member.n, items: cart.map(c=>({i:c.i,q:c.q})), total: Number(document.getElementById('total').textContent.replace('Rp','').replace(/\./g,'')) });
+    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,'')) });
     toast('Bon digantung atas nama '+member.n);
     clearCart();
   }
@@ -345,7 +363,7 @@
   }
   function tarikBon(x){
     const b=bon[x];
-    cart = b.items.map(it=>({i:it.i,q:it.q}));
+    cart = b.items.map(it=>({id:it.id,q:it.q}));
     bon.splice(x,1);
     document.getElementById('bonModal').classList.remove('show');
     toast('Bon ditarik');
@@ -357,22 +375,60 @@
 
   function bayar(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
-    if(offline) offQtn++; else offQtn=0;
+    const total=Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,''));
+    const detail=cart.map(c=>{ const p=PRODUK.find(p=>p.id===c.id); return {id:c.id, qty:c.q, harga:hargaMember(c.id)||p.p}; });
+    const clientRef='trx-'+Date.now()+'-'+Math.floor(Math.random()*1e4);
+    if(isTauri()){
+      tinv('antri_transaksi',{t:{client_ref:clientRef, produk:detail, metode, total}})
+        .then(()=>{ offQtn++; document.getElementById('offqN').textContent=offQtn; })
+        .catch(()=>toast('Gagal simpan antrian'));
+    } else {
+      offQtn++;
+    }
     document.getElementById('offqN').textContent=offQtn;
-    document.getElementById('ovTxt').innerHTML = offline
-      ? `Rp<b>${document.getElementById('total').textContent.replace('Rp','')}</b> tersimpan lokal ke antrian.<br>Auto-sinkron saat online.`
-      : 'Terbayar <b>'+metode+'</b>. Terkirim ke server.';
+    document.getElementById('ovTxt').innerHTML = `Rp<b>${document.getElementById('total').textContent.replace('Rp','')}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
     clearCart();
   }
   function closeOv(){ document.getElementById('ov').classList.remove('show'); }
   function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1800); }
-  function simulate(mode){
-    offline = mode!=='online';
-    if(mode==='online' && offQtn>0){ toast('Sinkron: '+offQtn+' transaksi terkirim'); offQtn=0; }
-    document.getElementById('offqN').textContent=offQtn;
-    status(); renderCart();
+  // muat data dari DB lokal (Rust) atau demo (browser preview)
+  async function initKasir(){
+    if(!isTauri()){
+      PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; offQtn=2;
+      status(); render(); renderCart(); renderMemberList(); renderOffQ(); return;
+    }
+    try{
+      const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
+      // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
+      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:'bi-box', k:x.kategori_id}));
+      MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id}));
+      offQtn = await tinv('jumlah_antrian');
+      if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
+    }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
+    status(); render(); renderCart(); renderMemberList(); renderOffQ();
   }
+  function renderOffQ(){ document.getElementById('offqN').textContent=offQtn; }
+
+  // sinkron manual: tarik katalog/member dari server ZPos + push antrian.
+  // butuh konfigurasi base_url + token (disimpan user di setelan pertama).
+  async function syncNow(){
+    const base=prompt('Base URL server ZPos (mis. https://zpos.zomet.my.id)','https://zpos.zomet.my.id');
+    if(!base) return;
+    const token=prompt('Token/JWT toko (dari ZPos web, masukkan token autentikasi)');
+    if(token===null) return;
+    toast('Menyinkron...');
+    try{
+      const r=await tinv('sync_remote',{baseUrl:base, token});
+      toast('Sinkron OK: '+r);
+      await initKasir();
+    }catch(e){ toast('Sinkron gagal: '+e); }
+  }
+  function simulate(mode){
+    // tak lagi dipakai utk offline toggling nyata; tombol wire ke syncNow.
+    if(mode==='online' && offQtn>0){ toast('Antrian '+offQtn+' akan dikirim saat sinkron'); }
+  }
+
   document.querySelectorAll('.paybtns button').forEach(b=>b.onclick=()=>{
     document.querySelectorAll('.paybtns button').forEach(x=>x.classList.remove('on'));
     b.classList.add('on'); metode=b.textContent.trim();
@@ -382,7 +438,10 @@
   document.querySelectorAll('.cat').forEach(c=>c.onclick=()=>{
     document.querySelectorAll('.cat').forEach(x=>x.classList.remove('on')); c.classList.add('on');
   });
-  status(); clock(); setInterval(clock,10000); render(); renderCart(); renderMemberList();
+  // pill connector → tombol sinkron manual
+  document.getElementById('simOnline')?.addEventListener('click',()=>syncNow());
+  status(); clock(); setInterval(clock,10000);
+  initKasir();
 </script>
 </body>
 </html>

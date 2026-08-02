@@ -22,9 +22,6 @@ pub struct AppState {
 #[derive(Serialize)]
 struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, foto_url: Option<String> }
 
-#[derive(Serialize)]
-struct AnggotaRow { id: i64, nama: String, telepon: Option<String>, kategori_member_id: Option<i64> }
-
 // ---------- commands ----------
 #[tauri::command]
 fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
@@ -51,13 +48,19 @@ fn cari_produk(state: State<AppState>, q: String) -> Result<Vec<ProdukRow>, Stri
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+struct AnggotaRow { id: i64, nama: String, telepon: Option<String>, kategori_member_id: Option<i64>, k: Option<String>, d: f64 }
+
 #[tauri::command]
 fn list_member(state: State<AppState>) -> Result<Vec<AnggotaRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut st = conn.prepare("SELECT id,nama,telepon,kategori_member_id FROM member ORDER BY nama")
-        .map_err(|e| e.to_string())?;
+    let mut st = conn.prepare(
+        "SELECT m.id, m.nama, m.telepon, m.kategori_member_id, km.nama, COALESCE(km.diskon_persen,0)
+         FROM member m LEFT JOIN kategori_member km ON km.id=m.kategori_member_id ORDER BY m.nama"
+    ).map_err(|e| e.to_string())?;
     let rows = st.query_map([], |r| Ok(AnggotaRow{
         id: r.get(0)?, nama: r.get(1)?, telepon: r.get(2)?, kategori_member_id: r.get(3)?,
+        k: r.get(4)?, d: r.get(5)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
