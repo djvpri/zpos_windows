@@ -280,14 +280,14 @@
     if(!t) throw new Error('__no_tauri__');
     return t.invoke(cmd,args||{});
   }
-  // stopgap: `var` (bukan const) biar SyntaxError 'isTauri already declared' TIDAK
+  // stopgap: `var` (bukan const) biar SyntaxError 'zposIsTauri already declared' TIDAK
   // mematikan script ketika WebView2 cache menyuntik dua <script> (HTML lama + baru).
   // `var` mengizinkan re-declare (idempotent) di scope yang sama. Akar = cache basi:
   // hapus %APPDATA%\*zpos.kasir.app* lalu jalankan exe terbaru. ponytail: kode owner.
-  var isTauri = function(){ return !!(window.__TAURI__?.core); };
+  var zposIsTauri = function(){ return !!(window.__TAURI__?.core); };
 
   // Buka DevTools webview (tombol di badge versi). Di browser biasa no-op.
-  function bukaDevtools(){ if(isTauri()) tinv('buka_devtools').catch(()=>{}); }
+  function bukaDevtools(){ if(zposIsTauri()) tinv('buka_devtools').catch(()=>{}); }
 
   // Harga satuan produk utk member aktif (dari hargaMap yg dihitung Rust).
   function hargaMember(id){
@@ -378,7 +378,7 @@
   async function pilihMember(id){
     const m=MEMBERS.find(m=>m.id===id); if(!m) return;
     // Harga efektif member dihitung backend (Rust). Demo fallback pakai peta statis.
-    if(isTauri()){
+    if(zposIsTauri()){
       try { hargaMap = await tinv('harga_member',{memberId:id}); }
       catch(e){ hargaMap={}; toast('Gagal muat harga member'); }
     } else {
@@ -438,7 +438,7 @@
     const total=Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,''));
     const detail=cart.map(c=>{ const p=PRODUK.find(p=>p.id===c.id); return {id:c.id, qty:c.q, harga:hargaMember(c.id)||p.p}; });
     const clientRef='trx-'+Date.now()+'-'+Math.floor(Math.random()*1e4);
-    if(isTauri()){
+    if(zposIsTauri()){
       tinv('antri_transaksi',{t:{client_ref:clientRef, produk:detail, metode, total}})
         .then(()=>{ offQtn++; document.getElementById('offqN').textContent=offQtn; })
         .catch(()=>toast('Gagal simpan antrian'));
@@ -463,7 +463,7 @@
   }
   // muat data dari DB lokal (Rust) atau demo (browser preview)
   async function initKasir(){
-    if(!isTauri()){
+    if(!zposIsTauri()){
       PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; offQtn=2;
       status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); return;
     }
@@ -522,7 +522,7 @@
   async function autoSync(){
     const token=localStorage.getItem('zpos_token');
     const base=localStorage.getItem('zpos_base');
-    if(!token || !base || syncing || !isTauri()) return;
+    if(!token || !base || syncing || !zposIsTauri()) return;
     syncing=true;
     try{
       await tinv('sync_remote',{baseUrl:base, token});
