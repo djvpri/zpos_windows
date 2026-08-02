@@ -4,8 +4,6 @@
   "version": "0.1.0",
   "identifier": "my.id.zpos.kasir",
   "build": {
-    "beforeDevCommand": "",
-    "devUrl": "",
     "frontendDist": "../src"
   },
   "app": {
