@@ -10,7 +10,7 @@
 // Endpoint ini TANPA cookie (qr-request/qr-poll publik). Dipakai reqwest
 // blocking (worker thread Tauri) — konsisten dgn sync.rs.
 
-use qrcode::{EcLevel, QrCode};
+use qrcode::{EcLevel, QrCode, Color};
 use serde_json::Value;
 
 fn endpoint(base: &str, path: &str) -> String {
@@ -31,7 +31,7 @@ fn svg_qr(data: &str) -> String {
     svg.push_str("' shape-rendering='crispEdges'>");
     for y in 0..w {
         for x in 0..w {
-            if code[(x, y)] {
+            if code[(x, y)] == Color::Dark {
                 svg.push_str(&format!(
                     "<rect x='{}' y='{}' width='1' height='1'/>",
                     x, y
