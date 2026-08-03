@@ -29,7 +29,7 @@ fn svg_qr(data: &str) -> String {
     let code = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::M).unwrap();
     let w = code.width();
     let mut svg = String::from(
-        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 '",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 '",
     );
     svg.push_str(&w.to_string());
     svg.push(' ');

@@ -583,12 +583,12 @@
         logErr('QR', 'qrStart gagal: '+errMsg);
       });
   }
-  // Ambil SVG QR dari Rust, set ukuran tampilan 340px. Kalau SVG sudah punya
-  // width/height sendiri, ubah tetap 340 (viewBox server dipakai utk scale proporsional).
+  // Ambil SVG QR dari Rust, set ukuran tampilan 340px. SVG sudah bawa
+  // width='340' height='340' (dari Rust svg_qr); biarkan utuh. Hanya tambah
+  // width 340 bila SVG bawaan sama sekali TAK punya atribut width (defense).
   function imgSvg(s){
     if(!s) return '';
-    const hasW=/width="(\d+)"/.exec(s);
-    if(hasW) return s.replace(new RegExp('width="'+hasW[1]+'"'), 'width="340"').replace(/height="(\d+)"/, 'height="340"');
+    if(/<svg[^>]*\bwidth\s*=/.test(s)) return s;   // sudah ada width (single/double quote)
     return s.replace(/<svg/, '<svg width="340" height="340"');
   }
   function qrStartPoll(){
