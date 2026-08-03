@@ -3,6 +3,7 @@
 // Frontend: HTML/CSS/JS di webview, komunikasi via Tauri `invoke`.
 
 mod db;
+mod qrauth;
 mod sync;
 
 use db::AppDb;
@@ -148,6 +149,19 @@ fn buka_devtools(win: WebviewWindow) {
     let _ = win.open_devtools();
 }
 
+// Mulai QR login: minta device_code ke server, render QR (SVG), balik JSON
+// {device_code, svg, url, ttl_seconds} utk frontend tampilkan + poll.
+#[tauri::command]
+fn qr_login(base_url: String) -> Result<String, String> {
+    qrauth::start(&base_url)
+}
+
+// Poll QR login: cek status pairing. Balik JSON {status, token?}.
+#[tauri::command]
+fn qr_poll(base_url: String, device_code: String) -> Result<String, String> {
+    qrauth::poll(&base_url, &device_code)
+}
+
 fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -161,7 +175,8 @@ fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
-            antri_transaksi, jumlah_antrian, sync_remote, buka_devtools
+            antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
+            qr_login, qr_poll
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

@@ -20,6 +20,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
+qrcode = "0.14"
 
 [profile.release]
 opt-level = 2
