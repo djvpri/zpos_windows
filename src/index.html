@@ -572,9 +572,15 @@
       })
       .catch(e=>{
         btn.style.display=''; btn.disabled=false;
-        msg.textContent='Gagal mulai QR: '+(e&&e.message?e.message:e);
-        showErr('QR login gagal: '+(e&&e.message?e.message:e));
-        logErr('QR', 'qrStart gagal: '+(e&&e.message?e.message:e));
+        const errMsg=(e&&e.message?e.message:e)||'';
+        let pesan;
+        if(/network|connect|resolve|Failed to fetch|dns/i.test(errMsg))
+          pesan='Tidak dapat menghubungi server QR. Cek Base URL (https://zpos.zomet.my.id) & koneksi internet.';
+        else
+          pesan='Gagal mulai QR: '+errMsg;
+        msg.textContent=pesan;
+        showErr('QR login gagal: '+pesan);
+        logErr('QR', 'qrStart gagal: '+errMsg);
       });
   }
   // Ambil SVG QR dari Rust, set ukuran tampilan 340px. Kalau SVG sudah punya
@@ -612,11 +618,21 @@
         }
       }catch(e){
         qrStop();
+        const errMsg=(e&&e.message?e.message:e)||'';
         const btn=document.getElementById('qrBtn');
         btn.style.display=''; btn.disabled=false;
-        document.getElementById('qrMsg').textContent='Polling gagal: '+(e&&e.message?e.message:e);
-        showErr('Polling QR gagal: '+(e&&e.message?e.message:e));
-        logErr('QR', 'qrPoll gagal: '+(e&&e.message?e.message:e));
+        // Terjemahkan error khas QR → pesan jelas utk kasir (jangan "Polling gagal" generik).
+        let pesan;
+        if(/tidak terdaftar/i.test(errMsg) || /404/i.test(errMsg))
+          pesan='QR discan, tapi email akun belum terdaftar/aktif di ZPos. Login Z One pakai email owner, lalu coba lagi.';
+        else if(/401|Unauthorized/i.test(errMsg))
+          pesan='Sesi QR kedaluwarsa saat verifikasi. Buat QR baru & scan ulang.';
+        else
+          pesan='Gagal verifikasi QR: '+errMsg;
+        document.getElementById('qrMsg').textContent=pesan;
+        document.getElementById('qrBox').style.display='none';
+        showErr('QR login gagal: '+pesan);
+        logErr('QR', 'qrPoll gagal: '+errMsg);
       }
     },1500);
   }
