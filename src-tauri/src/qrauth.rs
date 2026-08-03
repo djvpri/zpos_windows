@@ -31,7 +31,7 @@ fn svg_qr(data: &str) -> String {
     svg.push_str("' shape-rendering='crispEdges'>");
     for y in 0..w {
         for x in 0..w {
-            if *code.get(x, y) {
+            if code[(x, y)] {
                 svg.push_str(&format!(
                     "<rect x='{}' y='{}' width='1' height='1'/>",
                     x, y
