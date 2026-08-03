@@ -562,7 +562,7 @@
         const r=JSON.parse(raw);
         qrCode=r.session_id; qrBase=base;
         qrDeadline=Date.now()+(r.ttl_seconds||60)*1000;
-        box.innerHTML='<div style="background:#fff;border:6px solid #fff;display:inline-block;width:190px;height:190px;border-radius:8px">'+
+        box.innerHTML='<div style="background:#fff;border:8px solid #fff;display:inline-block;width:340px;height:340px;border-radius:12px">'+
           imgSvg(r.svg)+'</div>';
         msg.textContent='Scan pakai HP: buka Z One, ketuk ikon kamera (Scan QR Login). Kode berlaku '+ (r.ttl_seconds||60) +' detik.';
         box.style.display='block';
@@ -577,13 +577,13 @@
         logErr('QR', 'qrStart gagal: '+(e&&e.message?e.message:e));
       });
   }
-  // Ambil SVG QR dari Rust, set ukuran tampilan 190px (viewBox asli dari server
-  // dipakai buat scaling proporsional tanpa distorsi).
+  // Ambil SVG QR dari Rust, set ukuran tampilan 340px. Kalau SVG sudah punya
+  // width/height sendiri, ubah tetap 340 (viewBox server dipakai utk scale proporsional).
   function imgSvg(s){
     if(!s) return '';
-    // injek width/height utk scale; kalau sudah ada, biarkan (fallback).
-    if(/width=/.test(s)) return s;
-    return s.replace(/<svg/, '<svg width="190" height="190"');
+    const hasW=/width="(\d+)"/.exec(s);
+    if(hasW) return s.replace(new RegExp('width="'+hasW[1]+'"'), 'width="340"').replace(/height="(\d+)"/, 'height="340"');
+    return s.replace(/<svg/, '<svg width="340" height="340"');
   }
   function qrStartPoll(){
     qrTimer=setInterval(async()=>{
