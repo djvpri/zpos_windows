@@ -149,17 +149,17 @@ fn buka_devtools(win: WebviewWindow) {
     let _ = win.open_devtools();
 }
 
-// Mulai QR login: minta device_code ke server, render QR (SVG), balik JSON
-// {device_code, svg, url, ttl_seconds} utk frontend tampilkan + poll.
+// Mulai QR login: minta qrSession Z One, render QR (SVG), balik JSON
+// {session_id, token, svg, url, ttl_seconds} utk frontend tampilkan + poll.
 #[tauri::command]
 fn qr_login(base_url: String) -> Result<String, String> {
     qrauth::start(&base_url)
 }
 
-// Poll QR login: cek status pairing. Balik JSON {status, token?}.
+// Poll QR login: cek status qrSession Z One. Balik JSON {status, token?}.
 #[tauri::command]
-fn qr_poll(base_url: String, device_code: String) -> Result<String, String> {
-    qrauth::poll(&base_url, &device_code)
+fn qr_poll(base_url: String, session_id: String) -> Result<String, String> {
+    qrauth::poll(&session_id, &base_url)
 }
 
 // ---------- log error utk diagnosa ----------

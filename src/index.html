@@ -560,11 +560,11 @@
     tinv('qr_login',{baseUrl:base})
       .then(raw=>{
         const r=JSON.parse(raw);
-        qrCode=r.device_code; qrBase=base;
-        qrDeadline=Date.now()+(r.ttl_seconds||120)*1000;
+        qrCode=r.session_id; qrBase=base;
+        qrDeadline=Date.now()+(r.ttl_seconds||60)*1000;
         box.innerHTML='<div style="background:#fff;border:6px solid #fff;display:inline-block;width:190px;height:190px;border-radius:8px">'+
           imgSvg(r.svg)+'</div>';
-        msg.textContent='Scan pakai HP: login Z One lalu buka ZPos. Kode berlaku '+ (r.ttl_seconds||120) +' detik.';
+        msg.textContent='Scan pakai HP: buka Z One, ketuk ikon kamera (Scan QR Login). Kode berlaku '+ (r.ttl_seconds||60) +' detik.';
         box.style.display='block';
         msg.style.display='block';
         // polling tiap 1.5 detik sampai done/expired
@@ -589,7 +589,7 @@
     qrTimer=setInterval(async()=>{
       if(!qrCode){ qrStop(); return; }
       try{
-        const raw=await tinv('qr_poll',{baseUrl:qrBase, deviceCode:qrCode});
+        const raw=await tinv('qr_poll',{baseUrl:qrBase, sessionId:qrCode});
         const r=JSON.parse(raw);
         const msg=document.getElementById('qrMsg');
         if(r.status==='done'){
