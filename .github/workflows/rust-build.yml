@@ -40,9 +40,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: build
-      # terbundel via tauri.conf.json bundle.targets "all" (NSIS exe + msi)
+      # tauri-action default = 'tauri build' (bundle.targets all -> NSIS+MSI)
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
