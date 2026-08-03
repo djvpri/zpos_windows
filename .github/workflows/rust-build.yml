@@ -3,14 +3,14 @@ name: Rust Build (ZPos Kasir)
 on:
   push:
     branches: [main]
-    paths: ['src-tauri/**', '.github/workflows/rust-build.yml']
+    paths: ['src-tauri/**', 'src/**', '.github/workflows/rust-build.yml']
   pull_request:
-    paths: ['src-tauri/**']
+    paths: ['src-tauri/**', 'src/**']
   workflow_dispatch:
 
 jobs:
   build:
-    name: cargo check + build (windows)
+    name: tauri build (bundle windows)
     runs-on: windows-latest
     defaults:
       run:
@@ -23,19 +23,30 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
+      - name: NodeJS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
-      - name: cargo check
+      - name: Check
         run: cargo check --release
 
-      - name: cargo build
-        run: cargo build --release
+      - name: Build & bundle installer (tauri)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: build
+      # terbundel via tauri.conf.json bundle.targets "all" (NSIS exe + msi)
 
-      - name: Upload artifact
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: zpos-kasir-release
-          path: src-tauri/target/release/zpos-kasir.exe
+          name: zpos-kasir-windows
+          path: src-tauri/target/release/bundle/*/*
           if-no-files-found: error
