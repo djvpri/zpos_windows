@@ -162,6 +162,42 @@ fn qr_poll(base_url: String, device_code: String) -> Result<String, String> {
     qrauth::poll(&base_url, &device_code)
 }
 
+// ---------- log error utk diagnosa ----------
+// Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
+// path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
+fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    dir.join("zpos-errors.log")
+}
+
+#[tauri::command]
+fn tulis_log(app: tauri::AppHandle, msg: String) -> Result<(), String> {
+    let p = log_path(&app);
+    let line = format!("{} | {}\n", chrono_now(), msg);
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&p)
+        .map_err(|e| e.to_string())?;
+    f.write_all(line.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn baca_log(app: tauri::AppHandle, tail: usize) -> Result<String, String> {
+    let p = log_path(&app);
+    let n = tail.max(1);
+    if !p.exists() { return Ok(String::new()); }
+    let txt = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    let lines: Vec<&str> = txt.lines().collect();
+    Ok(lines.iter().rev().take(n).rev().cloned().collect::<Vec<_>>().join("\n"))
+}
+
+// Utk timestamp: minimal, tanpa dep eksternal — pakai format sederhana.
+fn chrono_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    // cukup unix epoch detik; readable utk diagnosa
+    format!("{}", s)
+}
+
 fn run() {
     tauri::Builder::default()
         .setup(|app| {
@@ -176,7 +212,7 @@ fn run() {
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
-            qr_login, qr_poll
+            qr_login, qr_poll, tulis_log, baca_log
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
