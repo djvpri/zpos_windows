@@ -586,8 +586,10 @@
   // Ambil SVG QR dari Rust, set ukuran tampilan 340px. SVG sudah bawa
   // width='340' height='340' (dari Rust svg_qr); biarkan utuh. Hanya tambah
   // width 340 bila SVG bawaan sama sekali TAK punya atribut width (defense).
+  // Juga repair viewBox bila terpotong spt '0 0 ' (exe lama) biar tak error browser.
   function imgSvg(s){
     if(!s) return '';
+    s = s.replace(/viewBox\s*=\s*['"]0\s+0\s+['"]/, "viewBox='0 0 21 21'");
     if(/<svg[^>]*\bwidth\s*=/.test(s)) return s;   // sudah ada width (single/double quote)
     return s.replace(/<svg/, '<svg width="340" height="340"');
   }
