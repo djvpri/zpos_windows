@@ -223,8 +223,21 @@
     <div class="mch"><span><i class="bi bi-gear"></i> Sinkron ke Server ZPos</span><span class="x" onclick="tutupSet()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb">
       <div class="fld"><label>Base URL server ZPos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
-      <div class="fld"><label>Token toko (JWT dari ZPos web)</label><input id="setToken" placeholder="masukkan token autentikasi" /></div>
-      <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
+
+      <!-- Jalur utama: QR login -->
+      <div class="fld">
+        <label>Login dengan scan QR</label>
+        <button class="sbtn" id="qrBtn" onclick="qrStart()"><i class="bi bi-qr-code-scan"></i> Tampilkan QR Login</button>
+        <div id="qrBox" style="display:none;text-align:center;margin-top:8px"></div>
+        <p id="qrMsg" style="font-size:11px;color:#777;margin:6px 0 0;text-align:center"></p>
+      </div>
+
+      <!-- Jalur fallback: token manual (untuk admin/dukungan) -->
+      <div class="fld" style="margin-top:6px">
+        <label>Atau masukkan token manual (lanjutan)</label>
+        <input id="setToken" placeholder="token autentikasi ZPos" />
+        <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
+      </div>
     </div>
   </div>
 </div>
@@ -483,12 +496,102 @@
   // base_url + token disimpan di localStorage, diisi via modal setelan
   // (window.prompt diblokir di WebView2 Tauri — makanya pakai modal).
   function openSet(){
+    qrReset();
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
     document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
     document.getElementById('setModal').classList.add('show');
     setTimeout(()=>document.getElementById('setToken').focus(),60);
   }
-  function tutupSet(){ document.getElementById('setModal').classList.remove('show'); }
+  function tutupSet(){ qrStop(); document.getElementById('setModal').classList.remove('show'); }
+
+  // ---- QR login (device pairing via Z One SSO) ----
+  // State polling: matikan kalau modal ditutup / sukses / expired. Guard
+  // interval tunggal (qrStart saat polling aktif = no-op agar tak dobel poll).
+  let qrTimer=null, qrCode=null, qrBase='', qrDeadline=0;
+  function qrReset(){
+    qrTimer && clearInterval(qrTimer); qrTimer=null; qrCode=null;
+    const b=document.getElementById('qrBox'); if(b) b.style.display='none';
+    const m=document.getElementById('qrMsg'); if(m) m.textContent='';
+    const btn=document.getElementById('qrBtn'); if(btn){ btn.style.display=''; btn.disabled=false; }
+  }
+  function qrStop(){ if(qrTimer){ clearInterval(qrTimer); qrTimer=null; } }
+  function qrStart(){
+    if(qrTimer) return; // sudah dalam proses polling
+    const base=document.getElementById('setUrl').value.trim();
+    if(!base){ toast('Base URL wajib diisi'); return; }
+    const btn=document.getElementById('qrBtn');
+    btn.disabled=true; btn.style.display='none';
+    const box=document.getElementById('qrBox'), msg=document.getElementById('qrMsg');
+    msg.textContent='Membuat kode QR...';
+    box.style.display='block'; box.innerHTML='';
+    tinv('qr_login',{baseUrl:base})
+      .then(raw=>{
+        const r=JSON.parse(raw);
+        qrCode=r.device_code; qrBase=base;
+        qrDeadline=Date.now()+(r.ttl_seconds||120)*1000;
+        box.innerHTML='<div style="background:#fff;border:6px solid #fff;display:inline-block;width:190px;height:190px;border-radius:8px">'+
+          imgSvg(r.svg)+'</div>';
+        msg.textContent='Scan pakai HP: login Z One lalu buka ZPos. Kode berlaku '+ (r.ttl_seconds||120) +' detik.';
+        box.style.display='block';
+        msg.style.display='block';
+        // polling tiap 1.5 detik sampai done/expired
+        qrStartPoll();
+      })
+      .catch(e=>{
+        btn.style.display=''; btn.disabled=false;
+        msg.textContent='Gagal mulai QR: '+(e&&e.message?e.message:e);
+        showErr('QR login gagal: '+(e&&e.message?e.message:e));
+      });
+  }
+  // Ambil SVG QR dari Rust, set ukuran tampilan 190px (viewBox asli dari server
+  // dipakai buat scaling proporsional tanpa distorsi).
+  function imgSvg(s){
+    if(!s) return '';
+    // injek width/height utk scale; kalau sudah ada, biarkan (fallback).
+    if(/width=/.test(s)) return s;
+    return s.replace(/<svg/, '<svg width="190" height="190"');
+  }
+  function qrStartPoll(){
+    qrTimer=setInterval(async()=>{
+      if(!qrCode){ qrStop(); return; }
+      try{
+        const raw=await tinv('qr_poll',{baseUrl:qrBase, deviceCode:qrCode});
+        const r=JSON.parse(raw);
+        const msg=document.getElementById('qrMsg');
+        if(r.status==='done'){
+          qrStop();
+          const token=r.token||'';
+          localStorage.setItem('zpos_token',token);
+          document.getElementById('setToken').value=token;
+          msg.textContent='Login berhasil. Sinkron otomatis...';
+          qrDoneSync(token);
+        } else if(r.status==='expired' || Date.now()>qrDeadline){
+          qrStop();
+          msg.textContent='Kode QR kedaluwarsa. Tekan tombol untuk buat baru.';
+          const btn=document.getElementById('qrBtn');
+          btn.style.display=''; btn.disabled=false;
+          document.getElementById('qrBox').style.display='none';
+        } else {
+          // pending: hitung mundur
+          const left=Math.max(0,Math.round((qrDeadline-Date.now())/1000));
+          msg.textContent='Menunggu scan... sisa '+left+' detik.';
+        }
+      }catch(e){
+        qrStop();
+        const btn=document.getElementById('qrBtn');
+        btn.style.display=''; btn.disabled=false;
+        document.getElementById('qrMsg').textContent='Polling gagal: '+(e&&e.message?e.message:e);
+        showErr('Polling QR gagal: '+(e&&e.message?e.message:e));
+      }
+    },1500);
+  }
+  function qrDoneSync(token){
+    const base=document.getElementById('setUrl').value.trim();
+    localStorage.setItem('zpos_base',base);
+    tinv('sync_remote',{baseUrl:base, token})
+      .then(r=>{ tutupSet(); toast('Tersambung & sinkron: '+r); initKasir(); })
+      .catch(e=>{ tutupSet(); showErr('Tersambung, sinkron gagal: '+(e&&e.message?e.message:e)); });
+  }
   function saveSet(){
     const base=document.getElementById('setUrl').value.trim();
     const token=document.getElementById('setToken').value.trim();
