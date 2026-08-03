@@ -616,6 +616,7 @@
         btn.style.display=''; btn.disabled=false;
         document.getElementById('qrMsg').textContent='Polling gagal: '+(e&&e.message?e.message:e);
         showErr('Polling QR gagal: '+(e&&e.message?e.message:e));
+        logErr('QR', 'qrPoll gagal: '+(e&&e.message?e.message:e));
       }
     },1500);
   }
@@ -624,7 +625,7 @@
     localStorage.setItem('zpos_base',base);
     tinv('sync_remote',{baseUrl:base, token})
       .then(r=>{ tutupSet(); toast('Tersambung & sinkron: '+r); initKasir(); })
-      .catch(e=>{ tutupSet(); showErr('Tersambung, sinkron gagal: '+(e&&e.message?e.message:e)); });
+      .catch(e=>{ tutupSet(); showErr('Tersambung, sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'post-QR sync gagal: '+(e&&e.message?e.message:e)); });
   }
   function saveSet(){
     const base=document.getElementById('setUrl').value.trim();
@@ -636,7 +637,7 @@
     toast('Menyinkron...');
     tinv('sync_remote',{baseUrl:base, token})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>showErr('Sinkron gagal: '+(e&&e.message?e.message:e)));
+      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'saveSet sync gagal: '+(e&&e.message?e.message:e)); });
   }
   function syncNow(){
     const token=localStorage.getItem('zpos_token');
@@ -645,7 +646,7 @@
     toast('Menyinkron...');
     tinv('sync_remote',{baseUrl:base, token})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>showErr('Sinkron gagal: '+(e&&e.message?e.message:e)));
+      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'syncNow gagal: '+(e&&e.message?e.message:e)); });
   }
   function simulate(mode){
     // tak lagi dipakai utk offline toggling nyata; tombol wire ke syncNow.

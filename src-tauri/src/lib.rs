@@ -126,19 +126,36 @@ fn jumlah_antrian(state: State<AppState>) -> Result<i64, String> {
 
 // Panggil sinkron: tarik katalog+member, lalu kirim antrian. Butuh base_url + token.
 #[tauri::command]
-fn sync_remote(state: State<AppState>, base_url: String, token: String) -> Result<String, String> {
+fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String) -> Result<String, String> {
     // Command non-async → Tauri jalankan di worker thread. Guard Mutex boleh
     // ditahan (no await lintas), jadi tak ada masalah Send. Request pakai
     // reqwest::blocking (lihat Cargo.toml: fitur "blocking").
+    // Jangan pernah tulis token asli ke log — cukup tandai ada/tidak.
+    submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url, token);
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
 
-    let n_kat = c.pull_kategori(conn)?;
-    let n_produk = c.pull_produk(conn)?;
-    let n_member = c.pull_member(conn)?;
-    let n_push = c.push_antrian(conn)?;
+    let r = (|| -> Result<(usize, usize, usize, usize), String> {
+        let n_kat = c.pull_kategori(conn)?;
+        let n_produk = c.pull_produk(conn)?;
+        let n_member = c.pull_member(conn)?;
+        let n_push = c.push_antrian(conn)?;
+        Ok((n_kat, n_produk, n_member, n_push))
+    })();
+    match &r {
+        Ok((k, p, m, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} member={m} push={s}")),
+        Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
+    }
+    let (n_kat, n_produk, n_member, n_push) = r?;
     Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, push {n_push}"))
+}
+
+// Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
+fn mask(t: &str) -> String {
+    if t.is_empty() { "KOSONG".into() }
+    else if t.len() <= 6 { "****".into() }
+    else { format!("...{} (len {})", &t[t.len()-4..], t.len()) }
 }
 
 // Buka DevTools (window webview) — utk diagnosa langsung dari UI.
@@ -151,23 +168,62 @@ fn buka_devtools(win: WebviewWindow) {
 
 // Mulai QR login: minta qrSession Z One, render QR (SVG), balik JSON
 // {session_id, token, svg, url, ttl_seconds} utk frontend tampilkan + poll.
+// Di-log di sisi Rust (bukan cuma frontend) biar jejak ada walau JS mati.
 #[tauri::command]
-fn qr_login(base_url: String) -> Result<String, String> {
-    qrauth::start(&base_url)
+fn qr_login(app: tauri::AppHandle, base_url: String) -> Result<String, String> {
+    submit_log(&app, "QR start (Z One generate)");
+    match qrauth::start(&base_url) {
+        Ok(raw) => {
+            submit_log(&app, "QR generate OK (session diperoleh)");
+            Ok(raw)
+        }
+        Err(e) => {
+            submit_log(&app, &format!("QR generate GAGAL: {e}"));
+            Err(e)
+        }
+    }
 }
 
 // Poll QR login: cek status qrSession Z One. Balik JSON {status, token?}.
 #[tauri::command]
-fn qr_poll(base_url: String, session_id: String) -> Result<String, String> {
-    qrauth::poll(&session_id, &base_url)
+fn qr_poll(app: tauri::AppHandle, base_url: String, session_id: String) -> Result<String, String> {
+    match qrauth::poll(&session_id, &base_url) {
+        Ok(raw) => {
+            // Log status singkat dari respons (jangan bocorkan token).
+            let status = raw
+                .split('"')
+                .skip_while(|s| *s != "status")
+                .nth(1)
+                .unwrap_or("pending");
+            submit_log(&app, &format!("QR poll status={status}"));
+            Ok(raw)
+        }
+        Err(e) => {
+            submit_log(&app, &format!("QR poll GAGAL: {e}"));
+            Err(e)
+        }
+    }
 }
 
 // ---------- log error utk diagnosa ----------
 // Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
+// `submit_log` = helper internal yg dipakai command backend (QR/sync) dgn AppHandle,
+// biar jejak error bisa direkam MESKI frontend/JS mati atau error terjadi di Rust.
 fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     dir.join("zpos-errors.log")
+}
+
+// Tulis satu baris ke zpos-errors.log (app append, timestamp readable).
+// Fire-and-forget: gagal nulis TIDAK menggagalkan aksi utama.
+fn submit_log(app: &tauri::AppHandle, msg: &str) {
+    let p = log_path(app);
+    let line = format!("{} | {}\n", chrono_now(), msg);
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+        let _ = f.write_all(line.as_bytes());
+    }
 }
 
 #[tauri::command]
@@ -190,23 +246,43 @@ fn baca_log(app: tauri::AppHandle, tail: usize) -> Result<String, String> {
     Ok(lines.iter().rev().take(n).rev().cloned().collect::<Vec<_>>().join("\n"))
 }
 
-// Utk timestamp: minimal, tanpa dep eksternal — pakai format sederhana.
+// Timestamp readable lokal. chrono fitur `clock` (default) dipakai — bukan
+// SystemTime/epoch, supaya zpos-errors.log gampang diurut & dibaca.
 fn chrono_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    // cukup unix epoch detik; readable utk diagnosa
-    format!("{}", s)
+    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            std::fs::create_dir_all(&dir).ok();
+            if std::fs::create_dir_all(&dir).is_err() {
+                // Kalau gagal bikin dir, log tetap dicoba (fallback ke ".").
+                eprintln!("ZPos: gagal create dir {}", dir.display());
+            }
             let path = dir.join("zpos.db");
-            let conn = Connection::open(&path).expect("buka db");
-            db::init(&conn).expect("init db");
+            // Jejak boot biar dari zpos-errors.log langsung tau build mana & apakah
+            // startup sampai ke sini (kalau app tak muncul, cek baris START ini).
+            let handle = app.handle();
+            submit_log(handle, &format!(
+                "START versi={} data_dir={}", env!("CARGO_PKG_VERSION"), dir.display()
+            ));
+            let conn = match Connection::open(&path) {
+                Ok(c) => { submit_log(handle, "DB open OK"); c }
+                Err(e) => {
+                    submit_log(handle, &format!("DB open GAGAL: {e}"));
+                    panic!("buka db: {e}");
+                }
+            };
+            match db::init(&conn) {
+                Ok(()) => submit_log(handle, "DB init OK"),
+                Err(e) => {
+                    submit_log(handle, &format!("DB init GAGAL: {e}"));
+                    panic!("init db: {e}");
+                }
+            }
             app.manage(AppState { db: Mutex::new(conn), client: Mutex::new(None) });
+            submit_log(handle, "setup selesai, window akan tampil");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
