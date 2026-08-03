@@ -16,7 +16,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Toolchain (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -43,7 +43,7 @@ jobs:
       # tauri-action default = 'tauri build' (bundle.targets all -> NSIS+MSI)
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: zpos-kasir-windows
           path: src-tauri/target/release/bundle/*/*

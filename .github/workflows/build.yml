@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
@@ -30,7 +30,7 @@ jobs:
         run: cargo tauri build --no-bundle
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: zpos-kasir-windows-exe
           path: src-tauri/target/release/*.exe
