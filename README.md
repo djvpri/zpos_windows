@@ -40,3 +40,21 @@ Setelah itu katalog tersimpan lokal; kasir jalan offline.
 
 `.exe` dibangun lewat GitHub Actions (`windows-latest`, `cargo tauri build --no-bundle`).
 Cara build lokal: `cargo install tauri-cli` lalu `cargo tauri build` (perlu toolchain Windows).
+
+### Build lokal (Windows)
+
+```powershell
+# Prasyarat sekali: Rust (rustup.rs) + WebView2 runtime + Tauri CLI
+cargo --version          # pastikan Rust terpasang
+cargo install tauri-cli --locked
+
+# Dari folder src-tauri:
+cargo tauri build --no-bundle     # release portable exe -> target\release\zpos-kasir.exe
+cargo run                          # jalankan langsung utk tes (DevTools: klik badge versi kanan-bawah)
+```
+
+- Frontend `index.html` polos, `frontendDist: ../src` — **tanpa langkah build frontend**; hasilnya exe murni Rust.
+- Build release **pertama lama** (kompilasi puluhan crate + lto), sesudahnya cepat.
+- `cargo run` = debug build → startup lambat, tapi DevTools nempel utk lihat JS error.
+- Log error: `%APPDATA%\my.id.zpos.kasir.app\zpos-errors.log` (sama utk build lokal maupun CI — identifier sama).
+- Lokal di WSL/Linux **gagal** (butuh gtk/webkit system libs, non-root); build hanya jalan di Windows atau CI.
