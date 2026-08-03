@@ -1,0 +1,41 @@
+name: Rust Build (ZPos Kasir)
+
+on:
+  push:
+    branches: [main]
+    paths: ['src-tauri/**', '.github/workflows/rust-build.yml']
+  pull_request:
+    paths: ['src-tauri/**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: cargo check + build (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo check
+        run: cargo check --release
+
+      - name: cargo build
+        run: cargo build --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zpos-kasir-release
+          path: src-tauri/target/release/zpos-kasir.exe
+          if-no-files-found: error
