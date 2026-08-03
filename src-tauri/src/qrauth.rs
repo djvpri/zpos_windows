@@ -1,9 +1,9 @@
 // QR login (device pairing via Z One SSO) — endpoint auth ZPos, tanpa cookie.
 // Alur:
-//   1. start() POST /api/auth/qr-request → device_code + url base-relative
-//   2. frontend tampilkan QR berisi "{base}{url}" (kasir scan pakai HP)
-//   3. kasir login Z One di HP, redirect ke /sso?token=...&device=... → server
-//      sangkut zpos_token ke baris device_login
+//   1. start() POST /api/auth/qr-request → device_code + url (ABSOLUT ke Z One)
+//   2. frontend tampilkan QR berisi url tsb (kasir scan pakai HP)
+//   3. kasir login Z One di HP, Z One redirect ke /sso?token=...&device=... →
+//      server sangkut zpos_token ke baris device_login
 //   4. poll() GET /api/auth/qr-poll?code=... → {status:'done', token} → desktop
 //      simpan token & lanjut sync (pakai SyncClient yang sudah ada).
 //
@@ -44,7 +44,9 @@ fn svg_qr(data: &str) -> String {
 }
 
 // Mulai QR login: minta device_code + url ke server, balik JSON utk frontend.
-// base_url = base server ZPos (ex https://zpos.zomet.my.id).
+// base_url = base server ZPos (ex https://zpos.zomet.my.id), dipakai utk hit
+// endpoint. Server balik field "url" yang SUDAH ABSOLUT (ke Z One), jangan
+// digabung ulang dgn base_url (bug ganda-domain).
 pub fn start(base_url: &str) -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
@@ -58,8 +60,7 @@ pub fn start(base_url: &str) -> Result<String, String> {
     }
     let v: Value = resp.json().map_err(|e| format!("json: {e}"))?;
     let device_code = v["device_code"].as_str().ok_or("device_code tidak ada")?.to_string();
-    let path = v["url"].as_str().ok_or("url tidak ada")?.to_string();
-    let url = endpoint(base_url, &path);
+    let url = v["url"].as_str().ok_or("url tidak ada")?.to_string();
     let svg = svg_qr(&url);
     let ttl = v["ttl_seconds"].as_u64().unwrap_or(120);
 
