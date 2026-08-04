@@ -151,6 +151,14 @@
     opacity:0; transition:.3s; pointer-events:none; white-space:pre-wrap;
     font-family:ui-monospace,Consolas,monospace; z-index:99; }
   .errbar.show { opacity:1; }
+  /* banner update — muncul saat ada rilis lebih baru di GitHub Release */
+  .upbar { position:fixed; bottom:96px; left:50%; translate:-50% 0; z-index:98;
+    display:flex; align-items:center; gap:10px; background:#1e3a5f; color:#fff;
+    padding:10px 14px; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,.3); }
+  .upbar.hidden { display:none; }
+  .upbtn { background:#2f81f7; color:#fff; border:0; border-radius:7px; padding:6px 14px;
+    font-size:12px; font-family:Arial,Helvetica,sans-serif; cursor:pointer; }
+  .upbtn:hover { background:#3b8cff; }
   /* (QR SVG dihapus bersama fitur QR) */
 </style>
 </head>
@@ -290,7 +298,8 @@
 <div class="toast" id="toast"></div>
 <div class="errbar" id="errBar"></div>
 
-<div class="verbadge" id="verBadge" onclick="bukaDevtools()">v0.1.2 — di sini utk DevTools</div>
+<div class="verbadge" id="verBadge" onclick="bukaDevtools()">v</div>
+<div class="upbar hidden" id="upBar"><span id="upTxt"></span><button class="upbtn" id="upBtn">Perbarui</button></div>
 <script>
   // --- Data: dimuat dari DB lokal via Tauri invoke (offline). ---
   // Diluar Tauri (browser preview) dipakai data demo supaya layar tetap kebayang.
@@ -564,6 +573,37 @@
   }
   function renderOffQ(){ document.getElementById('offqN').textContent=offQtn; }
 
+  // Banding semver "1.2.3" (teks). True kalau a >= b utk update check.
+  function semverAtas(a,b){
+    const pa=a.split('.').map(x=>parseInt(x,10)||0), pb=b.split('.').map(x=>parseInt(x,10)||0);
+    for(let i=0;i<3;i++){
+      const x=(pa[i]||0)-(pb[i]||0);
+      if(x!==0) return x>0;
+    }
+    return false;
+  }
+  // Cek versi terbaru di GitHub Release; kalau lebih baru → tampilkan banner "Perbarui".
+  // Opsi B update: buka download exe di browser default (tak auto-apply).
+  function cekUpdate(){
+    if(!zposIsTauri()) { const vb=document.getElementById('verBadge'); if(vb) vb.textContent='v(prev)'; return; }
+    tinv('versi_app').then(local=>{
+      const vb=document.getElementById('verBadge'); if(vb) vb.textContent='v'+local;
+      fetch('https://api.github.com/repos/djvpri/zpos_windows/releases/latest',{cache:'no-store'})
+        .then(r=>r.ok?r.json():null)
+        .then(rel=>{
+          if(!rel||!rel.tag_name) return;
+          const latest=rel.tag_name.replace(/^v/,'');
+          if(semverAtas(latest,local)){
+            const bar=document.getElementById('upBar'); if(!bar) return;
+            document.getElementById('upTxt').textContent='Update v'+latest+' tersedia';
+            const exe=(rel.assets||[]).find(a=>a.name==='zpos-kasir.exe');
+            document.getElementById('upBtn').onclick=()=>{ window.open(exe?exe.browser_download_url:rel.html_url,'_blank'); };
+            bar.classList.remove('hidden');
+          }
+        }).catch(()=>{});   // offline/rate-limit → diam, bukan error
+    }).catch(()=>{});
+  }
+
   // sinkron manual: tarik katalog/member dari server ZPos + push antrian.
   // base_url + token disimpan di localStorage, diisi via modal setelan
   // (window.prompt diblokir di WebView2 Tauri — makanya pakai modal).
@@ -724,6 +764,7 @@
   status(); clock(); setInterval(clock,10000);
   setInterval(autoSync,60000);   // auto-sinkron (produk/member/antrian) tiap 60s saat online
   initKasir();
+  cekUpdate();
   refKasir();
   if(!kasirAktif) setTimeout(bukaLogin,400); // wajib pilih kasir sebelum transaksi
 </script>

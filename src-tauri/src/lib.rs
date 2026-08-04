@@ -286,6 +286,12 @@ fn buka_devtools(win: WebviewWindow) {
     let _ = win.open_devtools();
 }
 
+// Versi app dipakai frontend utk banding dgn release GitHub (tombol update).
+#[tauri::command]
+fn versi_app() -> String {
+    env!("CARGO_PKG_VERSION").into()
+}
+
 // ---------- log error utk diagnosa ----------
 // Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
@@ -371,6 +377,7 @@ fn run() {
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
             list_users, login_pin,
             setup_kasir,
+            versi_app,
             tulis_log, baca_log
         ])
         .run(tauri::generate_context!())
