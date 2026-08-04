@@ -219,13 +219,13 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     // Jangan pernah tulis token asli ke log — cukup tandai ada/tidak.
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
-    // Kalau frontend tak kirim token (mis. habis setup email+password),
-    // pakai token_jwt yg disimpan setup_kasir di meta.
-    let token = if token.trim().is_empty() {
-        conn.query_row(
-            "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
-        ).unwrap_or_default()
-    } else { token };
+    // Prioritas token: meta `token_jwt` (hasil setup email+password yg pasti JWT valid).
+    // Frontend auto-sync mungkin kirim token lama dr localStorage (mis. JWT_SECRET
+    // yg salah), jadi token param HANYA fallback kalau meta kosong.
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url.clone(), token);
 
