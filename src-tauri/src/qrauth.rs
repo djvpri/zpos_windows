@@ -34,7 +34,7 @@ fn svg_qr(data: &str) -> String {
     let pad = 4; // quiet zone 4 modul, spec QR minimum
     let dim = w + 2 * pad;
     let mut svg = String::from(
-        "<svg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 '",
+        "<svg xmlns='http://www.w3.org/2000/svg' width='640' height='640' viewBox='0 0 '",
     );
     svg.push_str(&dim.to_string());
     svg.push(' ');

@@ -107,6 +107,8 @@
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:60; }
   .modal.show { display:flex; }
   .modal .mc { background:#fff; border-radius:14px; max-width:420px; width:100%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; }
+  /* Saat mode QR login aktif, modal dilebarkan agar QR 640px tampil penuh (tak menyusut ke 420 — modul QR besar utk scan HP) */
+  .modal.qrmode .mc { max-width:760px; max-height:96vh; }
   .modal .mch { padding:14px 18px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f0f2f7; }
   .modal .mch .x { cursor:pointer; color:#98a2b3; }
   .modal .mch .x:hover { color:#ef4444; }
@@ -150,7 +152,7 @@
     opacity:0; transition:.3s; pointer-events:none; white-space:pre-wrap;
     font-family:ui-monospace,Consolas,monospace; z-index:99; }
   .errbar.show { opacity:1; }
-  #qrBox svg { width:340px; height:auto; display:block; image-rendering:pixelated; } /* QR statis penuh di 340px asli — jangan diskala turun (modul tetap tegas utk scan HP) */
+  #qrBox svg { width:640px; height:auto; display:block; image-rendering:pixelated; } /* QR statis 640px penuh — jangan diskala turun (modul tegas utk scan HP dari jarak kasir) */
 </style>
 </head>
 <body>
@@ -545,6 +547,7 @@
   function qrReset(){
     qrTimer && clearInterval(qrTimer); qrTimer=null; qrCode=null;
     const b=document.getElementById('qrBox'); if(b) b.style.display='none';
+    document.getElementById('setModal') && document.getElementById('setModal').classList.remove('qrmode');
     const m=document.getElementById('qrMsg'); if(m) m.textContent='';
     const btn=document.getElementById('qrBtn'); if(btn){ btn.style.display=''; btn.disabled=false; }
   }
@@ -555,6 +558,7 @@
     if(!base){ toast('Base URL wajib diisi'); return; }
     const btn=document.getElementById('qrBtn');
     btn.disabled=true; btn.style.display='none';
+    document.getElementById('setModal').classList.add('qrmode'); // lebarin modal utk QR 640
     const box=document.getElementById('qrBox'), msg=document.getElementById('qrMsg');
     msg.textContent='Membuat kode QR...';
     box.style.display='block'; box.innerHTML='';
@@ -563,7 +567,7 @@
         const r=JSON.parse(raw);
         qrCode=r.session_id; qrBase=base;
         qrDeadline=Date.now()+(r.ttl_seconds||60)*1000;
-        box.innerHTML='<div style="background:#fff;border:8px solid #fff;display:inline-block;width:340px;border-radius:12px;overflow:hidden">'+
+        box.innerHTML='<div style="background:#fff;border:12px solid #fff;display:inline-block;width:640px;border-radius:16px;overflow:hidden">'+
           imgSvg(r.svg)+'</div>';
         msg.textContent='Scan pakai HP: buka Z One, ketuk ikon kamera (Scan QR Login). Kode berlaku '+ (r.ttl_seconds||60) +' detik.';
         box.style.display='block';
