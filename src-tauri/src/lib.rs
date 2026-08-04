@@ -292,6 +292,14 @@ fn versi_app() -> String {
     env!("CARGO_PKG_VERSION").into()
 }
 
+// Buka tautan eksternal (mis. unduhan update) di browser default Windows.
+// `window.open` di WebView2 Tauri sering diblokir/diam-saja — pakai `opener`
+// biar URL benar2 terbuka di browser OS (garansi, bukan navigasi dalam webview).
+#[tauri::command]
+fn buka_url(url: String) -> Result<(), String> {
+    opener::open(&url).map_err(|e| format!("gagal buka tautan: {e}"))
+}
+
 // ---------- log error utk diagnosa ----------
 // Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
@@ -378,6 +386,7 @@ fn run() {
             list_users, login_pin,
             setup_kasir,
             versi_app,
+            buka_url,
             tulis_log, baca_log
         ])
         .run(tauri::generate_context!())

@@ -597,7 +597,13 @@
             const bar=document.getElementById('upBar'); if(!bar) return;
             document.getElementById('upTxt').textContent='Update v'+latest+' tersedia';
             const exe=(rel.assets||[]).find(a=>a.name==='zpos-kasir.exe');
-            document.getElementById('upBtn').onclick=()=>{ window.open(exe?exe.browser_download_url:rel.html_url,'_blank'); };
+            document.getElementById('upBtn').onclick=()=>{
+              const url=exe?exe.browser_download_url:rel.html_url;
+              // `window.open` di WebView2 Tauri sering diblokir diam-diam → buka
+              // lewat Rust `buka_url` (crate opener) yg buka browser default OS.
+              if(window.__TAURI__) tinv('buka_url',{url}).catch(()=>{});
+              else window.open(url,'_blank');
+            };
             bar.classList.remove('hidden');
           }
         }).catch(()=>{});   // offline/rate-limit → diam, bukan error
