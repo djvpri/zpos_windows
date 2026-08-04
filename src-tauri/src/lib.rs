@@ -101,9 +101,11 @@ fn harga_member(state: State<AppState>, member_id: i64) -> Result<serde_json::Ma
 #[derive(Deserialize)]
 struct SimpanTrx {
     client_ref: String,
-    produk: Vec<Value>, // [{id, qty, harga}]
-    metode: String,
-    total: i64,
+    payload: Value, // { trx, items } — format persis POST /api/transaksi server ZPos web
+    #[serde(default)]
+    metode: Option<String>,
+    #[serde(default)]
+    total: Option<i64>,
     #[serde(default)]
     user_id: Option<i64>,
     #[serde(default)]
@@ -113,13 +115,13 @@ struct SimpanTrx {
 #[tauri::command]
 fn antri_transaksi(state: State<AppState>, t: SimpanTrx) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let payload_json = serde_json::to_string(&t.payload).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO antrian (client_ref,produk,metode,total,dibuat_at,user_id,user_nama)
          VALUES (?1,?2,?3,?4,datetime('now'),?5,?6)",
         rusqlite::params![
             t.client_ref,
-            serde_json::to_string(&t.produk).map_err(|e| e.to_string())?,
-            t.metode, t.total, t.user_id, t.user_nama
+            payload_json, t.metode, t.total, t.user_id, t.user_nama
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())

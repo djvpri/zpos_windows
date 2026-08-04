@@ -495,18 +495,32 @@
   function bayar(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!kasirAktif){ bukaLogin(); toast('Masuk dulu pilih kasir & PIN'); return; }
-    const total=Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,''));
-    const detail=cart.map(c=>{ const p=PRODUK.find(p=>p.id===c.id); return {id:c.id, qty:c.q, harga:hargaMember(c.id)||p.p}; });
-    const clientRef='trx-'+Date.now()+'-'+Math.floor(Math.random()*1e4);
+    // Bangun payload penuh persis format server ZPos web (GET/POST /api/transaksi
+    // terima { trx, items }). Disimpan utuh di antrian; push_antrian kirim apa adanya.
+    const items = cart.map(c=>{
+      const p=PRODUK.find(p=>p.id===c.id); if(!p) return null;
+      const h=hargaMember(c.id)||p.p;
+      return { produk_id:c.id, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
+    }).filter(Boolean);
+    const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
+    const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
+    const total=subtotal-diskon;
+    const noTransaksi='TRX-'+Date.now().toString().slice(-8); // format noTrx() di web
+    const payload={
+      trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
+            bayar:total, kembali:0, metode_bayar:metode, kasir:kasirAktif.nama,
+            created_at:new Date().toISOString() },
+      items,
+    };
     if(zposIsTauri()){
-      tinv('antri_transaksi',{t:{client_ref:clientRef, produk:detail, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
+      tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
         .then(()=>{ offQtn++; document.getElementById('offqN').textContent=offQtn; })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
       offQtn++;
     }
     document.getElementById('offqN').textContent=offQtn;
-    document.getElementById('ovTxt').innerHTML = `Rp<b>${document.getElementById('total').textContent.replace('Rp','')}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
+    document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
     clearCart();
   }

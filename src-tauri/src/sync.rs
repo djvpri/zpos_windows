@@ -1,5 +1,6 @@
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 pub struct RemoteProduk {
@@ -51,22 +52,6 @@ pub struct RemoteUser {
 pub struct RemoteUsersResp {
     pub toko_id: i64,
     pub users: Vec<RemoteUser>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct PushItem {
-    pub id: i64,
-    pub qty: i64,
-    pub harga: i64,
-}
-
-// Body transaksi yang dikirim ke server ZPos (POST /api/transaksi).
-#[derive(Debug, Serialize)]
-pub struct PushTransaksi {
-    pub client_ref: String,
-    pub metode_bayar: String,
-    pub details: Vec<PushItem>,
-    pub total: i64,
 }
 
 pub struct SyncClient {
@@ -235,15 +220,13 @@ impl SyncClient {
         };
 
         let mut pushed = 0usize;
-        for (id, client_ref, produk, metode, total, _dibuat) in rows {
-            let items: Vec<PushItem> = serde_json::from_str(&produk)
+        for (id, client_ref, produk, _metode, _total, _dibuat) in rows {
+            // Kolom `produk` kini menyimpan payload penuh { trx, items } (persis body
+            // yang dikirim web ZPos ke POST /api/transaksi). Kirim apa adanya — server
+            // yang validasi. Bila masih antrian lama berbentuk [{id,qty,harga}] (pra-format
+            // ini), tidak akan cocok shape server dan ditolak — pengguna cukup re-entry.
+            let body: Value = serde_json::from_str(&produk)
                 .map_err(|e| format!("parse antrian {client_ref}: {e}"))?;
-            let body = PushTransaksi {
-                client_ref: client_ref.clone(),
-                metode_bayar: metode,
-                details: items,
-                total,
-            };
             let resp = self.http.post(self.endpoint("/api/transaksi"))
                 .header("Cookie", self.auth_cookie())
                 .json(&body)
