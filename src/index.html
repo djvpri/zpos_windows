@@ -657,6 +657,15 @@
       // jangan simpan password/token — login PIN lokal sudah cukup utk offline
       toast('Setup OK: '+r);
       initKasir();
+      // Tarik katalog/member sekarang: token_jwt sudah tersimpan oleh setup_kasir
+      // di SQLite (meta). Panggil sync_remote tanpa token → fallback ke meta.
+      tinv('sync_remote',{baseUrl:base, token:''})
+        .then(r2=>{ toast('Setup OK. Sinkron katalog: '+r2); initKasir(); })
+        .catch(e=>{
+          const m=e&&e.message?e.message:e;
+          showErr('Katalog belum tersinkron: '+m);
+          logErr('SETUP','setupSet sync lanjutan gagal: '+m);
+        });
     }catch(e){
       const m=e&&e.message?e.message:e;
       showErr('Setup gagal: '+m);

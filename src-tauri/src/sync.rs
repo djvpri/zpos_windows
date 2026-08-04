@@ -224,10 +224,32 @@ impl SyncClient {
         if !resp.status().is_success() {
             return Err(self.err_detail(resp));
         }
-        let rb: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
+        // Backend balik { toko_id, toko_nama, token, users }. token = JWT access
+        // utk app pakai sinkron katalog/member (sync_remote) tanpa tempel manual.
+        #[derive(serde::Deserialize)]
+        struct SetupResp {
+            toko_id: i64,
+            #[serde(default)]
+            toko_nama: Option<String>,
+            #[serde(default)]
+            token: Option<String>,
+            users: Vec<RemoteUser>,
+        }
+        let rb: SetupResp = resp.json().map_err(|e| format!("json: {e}"))?;
         let n = rb.users.len();
         let toko_nama = rb.toko_nama.clone().unwrap_or_default();
-        self.store_users(conn, &rb).map_err(|e| e.to_string())?;
+        {
+            let users = RemoteUsersResp { toko_id: rb.toko_id, toko_nama: rb.toko_nama, users: rb.users };
+            self.store_users(conn, &users).map_err(|e| e.to_string())?;
+        }
+        // Simpan JWT ke meta utk sync katalog/member berikutnya (sync_remote baca dari sini).
+        if let Some(t) = &rb.token {
+            conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('token_jwt',?1)
+                 ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [t],
+            ).map_err(|e| e.to_string())?;
+        }
         Ok((n, toko_nama))
     }
 
