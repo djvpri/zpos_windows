@@ -150,7 +150,7 @@
     opacity:0; transition:.3s; pointer-events:none; white-space:pre-wrap;
     font-family:ui-monospace,Consolas,monospace; z-index:99; }
   .errbar.show { opacity:1; }
-  #qrBox svg { width:100%; height:auto; display:block; } /* QR responsif: diskala muat modal, tak terpotong */
+  #qrBox svg { width:340px; height:auto; display:block; image-rendering:pixelated; } /* QR statis penuh di 340px asli — jangan diskala turun (modul tetap tegas utk scan HP) */
 </style>
 </head>
 <body>
@@ -563,7 +563,7 @@
         const r=JSON.parse(raw);
         qrCode=r.session_id; qrBase=base;
         qrDeadline=Date.now()+(r.ttl_seconds||60)*1000;
-        box.innerHTML='<div style="background:#fff;border:8px solid #fff;display:inline-block;max-width:100%;width:340px;border-radius:12px;overflow:hidden">'+
+        box.innerHTML='<div style="background:#fff;border:8px solid #fff;display:inline-block;width:340px;border-radius:12px;overflow:hidden">'+
           imgSvg(r.svg)+'</div>';
         msg.textContent='Scan pakai HP: buka Z One, ketuk ikon kamera (Scan QR Login). Kode berlaku '+ (r.ttl_seconds||60) +' detik.';
         box.style.display='block';
