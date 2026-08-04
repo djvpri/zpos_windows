@@ -46,6 +46,9 @@
   .card.low .stk { color:#ef4444; }
   .stk { font-size:10px; color:#98a2b3; }
   .foot-left { font-size:11px; color:#8a93a5; display:flex; justify-content:space-between; background:#f7f9fc; border-radius:8px; padding:8px 10px; }
+  .loadmore-wrap { padding:10px 0 2px; text-align:center; }
+  .loadmore { width:100%; padding:10px; font-weight:600; color:#1971c2; background:#fff; border:1px dashed #cdd6e4; border-radius:10px; cursor:pointer; font-size:13px; }
+  .loadmore:hover { background:#f0f5ff; border-color:#1971c2; }
   /* Kanan: keranjang */
   .right { display:flex; flex-direction:column; }
   .tbar { padding:14px 16px 0; font-size:13px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; }
@@ -196,6 +199,7 @@
       </div>
       <div class="cats" id="cats"></div>
       <div class="grid" id="grid"></div>
+      <div class="loadmore-wrap hidden" id="loadMoreWrap"><button class="loadmore" onclick="render(true)">Muat lebih banyak <i class="bi bi-chevron-double-down"></i></button></div>
       <div class="foot-left"><span><i class="bi bi-link-45deg"></i> Sepenuhnya offline</span><span>Katalog tersimpan lokal</span></div>
     </div>
 
@@ -329,6 +333,7 @@
   let bon = [];              // bon gantung {nama, total}
   let CATS = ['Semua'];            // diisi dinamis dari kategori produk (initKasir)
   let curCat = 'Semua';
+  let visN = 15;  // jumlah produk tampil per halaman katalog; loadmore menaikkan
 
   // invoke helper — Tauri v2. Di browser biasa fallback data demo biar mockup tetap kebayang.
   async function tinv(cmd,args){
@@ -405,14 +410,19 @@
     });
   }
 
-  function render(){
+  function render(more){
+    if(more) visN += 15;                 // loadmore: tampilkan 15 lagi
+    else visN = 15;                      // filter/search/init: reset
     const q=document.getElementById('q').value.toLowerCase();
     const g=document.getElementById('grid');
-    g.innerHTML=PRODUK.filter(p=>(curCat==='Semua' || p.k===curCat) && p.n.toLowerCase().includes(q)).map(p=>
+    const list=PRODUK.filter(p=>(curCat==='Semua' || p.k===curCat) && p.n.toLowerCase().includes(q));
+    g.innerHTML=list.slice(0,visN).map(p=>
       `<div class="card ${p.s<5?'low':''}" onclick="add(${p.id})">
         <div class="ph"><i class="bi ${p.e||'bi-box'}"></i></div><div class="nm">${p.n}</div>
         <div class="pr">${fmt(p.p)}</div><div class="stk">stok ${p.s}</div>
       </div>`).join('');
+    const lm=document.getElementById('loadMoreWrap');
+    if(list.length>visN){ lm.classList.remove('hidden'); } else { lm.classList.add('hidden'); }
   }
   function add(id){
     const f=cart.find(c=>c.id===id);
