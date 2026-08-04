@@ -47,10 +47,12 @@ pub struct RemoteUser {
     pub kasir_pin_hash: String,
 }
 
-// Balik seperti endpoint `/api/auth/users`: `{ toko_id, users: [...] }`.
+// Balik seperti endpoint `/api/auth/kasir-setup`: `{ toko_id, toko_nama?, users }`.
 #[derive(Debug, Deserialize)]
 pub struct RemoteUsersResp {
     pub toko_id: i64,
+    #[serde(default)]
+    pub toko_nama: Option<String>,
     pub users: Vec<RemoteUser>,
 }
 
@@ -171,18 +173,8 @@ impl SyncClient {
         Ok(list.len())
     }
 
-    // Daftar user toko (utk login PIN offline) → upsert users_lokal.
-    // Endpoint admin-only `/api/auth/users`; token yg dipakai setup harus admin.
-    pub fn pull_users(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/auth/users"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("HTTP {}: {}", resp.status().as_u16(),
-                resp.text().unwrap_or_default().trim()));
-        }
-        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
-
+    // Simpan daftar user ke users_lokal (ganti isi penuh, tanpa ganti baris).
+    fn store_users(&self, conn: &mut Connection, body: &RemoteUsersResp) -> Result<(), String> {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
             // Ganti isi tabel penuh: hapus semua dulu, lalu insert ulang dari server.
@@ -198,11 +190,45 @@ impl SyncClient {
                     u.aktif as i64, &u.kasir_pin_hash,
                 )).map_err(|e| e.to_string())?;
             }
-            // Sync ulang (admin) = reset semua attempt-lock PIN.
+            // Setiap tarik daftar user = reset semua attempt-lock PIN.
             tx.execute("DELETE FROM meta WHERE k LIKE 'pin_fail_%'", []).map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(body.users.len())
+        tx.commit().map_err(|e| e.to_string())
+    }
+
+    // Daftar user toko (utk login PIN offline) → store_users.
+    // Endpoint admin-only `/api/auth/users`; token yg dipakai sync harus admin.
+    pub fn pull_users(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/auth/users"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}: {}", resp.status().as_u16(),
+                resp.text().unwrap_or_default().trim()));
+        }
+        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
+        let n = body.users.len();
+        self.store_users(conn, &body).map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
+    // Setup pertama utk owner/admin tenant: login email+password sekali → server
+    // validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
+    // Ganti jalur manual (tempel JWT admin). Tak butuh auth cookie — server
+    // verifikasi kredensial sendiri di POST /api/auth/kasir-setup.
+    pub fn setup_kasir(&self, conn: &mut Connection, email: &str, password: &str) -> Result<(usize, String), String> {
+        let body = serde_json::json!({ "email": email, "password": password });
+        let resp = self.http.post(self.endpoint("/api/auth/kasir-setup"))
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(self.err_detail(resp));
+        }
+        let rb: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
+        let n = rb.users.len();
+        let toko_nama = rb.toko_nama.clone().unwrap_or_default();
+        self.store_users(conn, &rb).map_err(|e| e.to_string())?;
+        Ok((n, toko_nama))
     }
 
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.

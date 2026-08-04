@@ -247,10 +247,20 @@
     <div class="mcb">
       <div class="fld"><label>Base URL server ZPos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
 
-      <!-- Jalur token manual (admin/dukungan) -->
-      <div class="fld" style="margin-top:6px">
+      <!-- Jalur setup pertama: login email+password admin tenant → server
+           validasi & tarik daftar staff (auto-gen PIN utk yg belum punya).
+           Ganti cara lama yg minta tempel JWT admin manual. -->
+      <div class="fld" style="margin-top:8px">
+        <label><i class="bi bi-person-gear"></i> Setup toko (email admin)</label>
+        <input id="setUser" placeholder="email admin toko (mis. pemilik@toko)" style="margin-bottom:6px" />
+        <input id="setPass" type="password" placeholder="password akun" />
+        <button class="sbtn" id="setSetupBtn" style="margin-top:6px">Setup & Tarik Karyawan</button>
+      </div>
+
+      <!-- Jalur token manual (admin/dukungan, utk sync lanjutan) -->
+      <div class="fld" style="margin-top:10px">
         <label>Token autentikasi ZPos</label>
-        <input id="setToken" placeholder="token autentikasi ZPos" />
+        <input id="setToken" placeholder="token autentikasi ZPos (opsional utk setup)" />
         <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
       </div>
 
@@ -631,6 +641,28 @@
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
       .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'saveSet sync gagal: '+(e&&e.message?e.message:e)); });
   }
+  // Setup pertama: login email+password admin tenant (tanpa tempel JWT manual).
+  // Server validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
+  // Setelah sukses: simpan base (token kasir via login PIN lokal), reload daftar.
+  async function setupSet(){
+    const base=document.getElementById('setUrl').value.trim();
+    const email=document.getElementById('setUser').value.trim();
+    const pass=document.getElementById('setPass').value;
+    if(!base||!email||!pass){ toast('Isi Base URL, email, dan password admin'); return; }
+    tutupSet();
+    toast('Menarik daftar karyawan...');
+    try{
+      const r=await tinv('setup_kasir',{baseUrl:base,email,password:pass});
+      localStorage.setItem('zpos_base', base);
+      // jangan simpan password/token — login PIN lokal sudah cukup utk offline
+      toast('Setup OK: '+r);
+      initKasir();
+    }catch(e){
+      const m=e&&e.message?e.message:e;
+      showErr('Setup gagal: '+m);
+      logErr('SETUP', 'setupSet gagal: '+m);
+    }
+  }
   function syncNow(){
     const token=localStorage.getItem('zpos_token');
     const base=localStorage.getItem('zpos_base');
@@ -678,6 +710,7 @@
   // pill connector → tombol sinkron manual
   document.getElementById('simOnline')?.addEventListener('click',()=>syncNow());
   document.getElementById('setBtn')?.addEventListener('click',saveSet);
+  document.getElementById('setSetupBtn')?.addEventListener('click',setupSet);
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status(); clock(); setInterval(clock,10000);
   setInterval(autoSync,60000);   // auto-sinkron (produk/member/antrian) tiap 60s saat online

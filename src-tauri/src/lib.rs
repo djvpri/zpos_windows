@@ -246,6 +246,24 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, user {n_user}, push {n_push}"))
 }
 
+// Setup pertama (owner/admin tenant): login email+password sekali → server
+// validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
+// Tak perlu tempel JWT admin manual. Balik "(jumlah user, nama toko)".
+#[tauri::command]
+fn setup_kasir(state: State<AppState>, app: tauri::AppHandle, base_url: String, email: String, password: String) -> Result<String, String> {
+    submit_log(&app, &format!("kasir-setup mulai base={base_url} email={email}"));
+    let c = sync::SyncClient::new(base_url, String::new()); // token kosong — server validasi em+pass
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let r = c.setup_kasir(conn, &email, &password);
+    match &r {
+        Ok((n, toko)) => submit_log(&app, &format!("kasir-setup OK toko={toko} user={n}")),
+        Err(e) => submit_log(&app, &format!("kasir-setup GAGAL: {e}")),
+    }
+    let (n, toko) = r?;
+    Ok(format!("{} ({} kasir)", toko, n))
+}
+
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
 fn mask(t: &str) -> String {
     if t.is_empty() { "KOSONG".into() }
@@ -345,6 +363,7 @@ fn run() {
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
             list_users, login_pin,
+            setup_kasir,
             tulis_log, baca_log
         ])
         .run(tauri::generate_context!())
