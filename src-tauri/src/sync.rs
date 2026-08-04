@@ -32,6 +32,27 @@ pub struct RemoteMember {
     pub kategori_member_id: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RemoteUser {
+    pub id: i64,
+    pub toko_id: i64,
+    pub nama: String,
+    pub email: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub aktif: bool,
+    #[serde(default)]
+    pub kasir_pin_hash: String,
+}
+
+// Balik seperti endpoint `/api/auth/users`: `{ toko_id, users: [...] }`.
+#[derive(Debug, Deserialize)]
+pub struct RemoteUsersResp {
+    pub toko_id: i64,
+    pub users: Vec<RemoteUser>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PushItem {
     pub id: i64,
@@ -163,6 +184,40 @@ impl SyncClient {
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(list.len())
+    }
+
+    // Daftar user toko (utk login PIN offline) → upsert users_lokal.
+    // Endpoint admin-only `/api/auth/users`; token yg dipakai setup harus admin.
+    pub fn pull_users(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/auth/users"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}: {}", resp.status().as_u16(),
+                resp.text().unwrap_or_default().trim()));
+        }
+        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            // Ganti isi tabel penuh: hapus semua dulu, lalu insert ulang dari server.
+            // (hapus user yg akunnya tak lagi di daftar toko / dihapus penuh)
+            tx.execute("DELETE FROM users_lokal", []).map_err(|e| e.to_string())?;
+            let mut st = tx.prepare_cached(
+                "INSERT INTO users_lokal (id,toko_id,nama,email,role,aktif,pin_hash)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            ).map_err(|e| e.to_string())?;
+            for u in &body.users {
+                st.execute((
+                    u.id, u.toko_id, &u.nama, &u.email, &u.role,
+                    u.aktif as i64, &u.kasir_pin_hash,
+                )).map_err(|e| e.to_string())?;
+            }
+            // Sync ulang (admin) = reset semua attempt-lock PIN.
+            tx.execute("DELETE FROM meta WHERE k LIKE 'pin_fail_%'", []).map_err(|e| e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(body.users.len())
     }
 
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.

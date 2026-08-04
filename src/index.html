@@ -107,8 +107,7 @@
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:60; }
   .modal.show { display:flex; }
   .modal .mc { background:#fff; border-radius:14px; max-width:420px; width:100%; max-height:80vh; overflow:hidden; display:flex; flex-direction:column; }
-  /* Saat mode QR login aktif, modal dilebarkan agar QR 640px tampil penuh (tak menyusut ke 420 — modul QR besar utk scan HP) */
-  .modal.qrmode .mc { max-width:760px; max-height:96vh; }
+  /* (QR login dihapus; ubah ke login PIN multiuser) */
   .modal .mch { padding:14px 18px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f0f2f7; }
   .modal .mch .x { cursor:pointer; color:#98a2b3; }
   .modal .mch .x:hover { color:#ef4444; }
@@ -152,7 +151,7 @@
     opacity:0; transition:.3s; pointer-events:none; white-space:pre-wrap;
     font-family:ui-monospace,Consolas,monospace; z-index:99; }
   .errbar.show { opacity:1; }
-  #qrBox svg { width:640px; height:auto; display:block; image-rendering:pixelated; } /* QR statis 640px penuh — jangan diskala turun (modul tegas utk scan HP dari jarak kasir) */
+  /* (QR SVG dihapus bersama fitur QR) */
 </style>
 </head>
 <body>
@@ -164,6 +163,7 @@
     <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
     <div class="right">
       <span id="clock">—</span>
+      <div class="ic" title="Kasir aktif" onclick="bukaLogin()"><i class="bi bi-person-check"></i><span id="kasirNama" style="font-size:11px;margin-left:4px;color:#1971c2"></span></div>
       <div class="ic" title="Kosongkan" onclick="clearCart()"><i class="bi bi-trash3"></i></div>
       <div class="ic" title="Pengaturan" onclick="openSet()"><i class="bi bi-gear"></i></div>
     </div>
@@ -212,6 +212,26 @@
   </div>
 </div></div>
 
+<!-- Modal login PIN (multiuser perangkat) -->
+<div class="modal" id="loginModal">
+  <div class="mc" style="max-width:360px">
+    <div class="mch"><span><i class="bi bi-person-check"></i> <span id="loginHead">Login Kasir</span></span><span class="x" onclick="tutupLogin()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div class="fld">
+        <label>Pilih akun (pengingat username)</label>
+        <select id="loginUser" onchange="loginPilihUser()"><option value="">— pilih nama —</option></select>
+      </div>
+      <div class="fld" style="margin-top:10px">
+        <label>PIN 6 angka</label>
+        <input id="loginPin" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off" onkeydown="if(event.key==='Enter')doLogin()" oninput="this.value=this.value.replace(/\D/g,'')" />
+      </div>
+      <p id="loginMsg" style="font-size:12px;color:#c62828;margin:8px 0 0;min-height:16px"></p>
+      <button class="sbtn" id="loginBtn" onclick="doLogin()"><i class="bi bi-box-arrow-in-right"></i> Masuk</button>
+      <div style="margin-top:14px;font-size:11px;color:#777;line-height:1.5" id="loginHint">Pilih akun lalu masukkan PIN. 5x salah → akun terkunci (sinkron ulang sebagai admin utk buka).</div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal daftar bon gantung -->
 <div class="modal" id="bonModal">
   <div class="mc">
@@ -227,17 +247,9 @@
     <div class="mcb">
       <div class="fld"><label>Base URL server ZPos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
 
-      <!-- Jalur utama: QR login -->
-      <div class="fld">
-        <label>Login dengan scan QR</label>
-        <button class="sbtn" id="qrBtn" onclick="qrStart()"><i class="bi bi-qr-code-scan"></i> Tampilkan QR Login</button>
-        <div id="qrBox" style="display:none;text-align:center;margin-top:8px"></div>
-        <p id="qrMsg" style="font-size:11px;color:#777;margin:6px 0 0;text-align:center"></p>
-      </div>
-
-      <!-- Jalur fallback: token manual (untuk admin/dukungan) -->
+      <!-- Jalur token manual (admin/dukungan) -->
       <div class="fld" style="margin-top:6px">
-        <label>Atau masukkan token manual (lanjutan)</label>
+        <label>Token autentikasi ZPos</label>
         <input id="setToken" placeholder="token autentikasi ZPos" />
         <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
       </div>
@@ -313,7 +325,7 @@
 
   // ---------- log error otomatis ----------
   // Semua error JS (window.onerror) & promise reject yg tak ditangkap (~unhandledrejection)
-  // ditulis ke file zpos-errors.log + panel 'errLog' di modal setting, biar bug QR/sync/
+  // ditulis ke file zpos-errors.log + panel 'errLog' di modal setting, biar bug sync/
   // invoke langsung ketahuan tanpa buka DevTools.
   function logErr(sev, src){
     var m = (sev||'ERR') + (src?' | '+src:'');
@@ -482,11 +494,12 @@
 
   function bayar(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
+    if(!kasirAktif){ bukaLogin(); toast('Masuk dulu pilih kasir & PIN'); return; }
     const total=Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,''));
     const detail=cart.map(c=>{ const p=PRODUK.find(p=>p.id===c.id); return {id:c.id, qty:c.q, harga:hargaMember(c.id)||p.p}; });
     const clientRef='trx-'+Date.now()+'-'+Math.floor(Math.random()*1e4);
     if(zposIsTauri()){
-      tinv('antri_transaksi',{t:{client_ref:clientRef, produk:detail, metode, total}})
+      tinv('antri_transaksi',{t:{client_ref:clientRef, produk:detail, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
         .then(()=>{ offQtn++; document.getElementById('offqN').textContent=offQtn; })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
@@ -531,125 +544,67 @@
   // base_url + token disimpan di localStorage, diisi via modal setelan
   // (window.prompt diblokir di WebView2 Tauri — makanya pakai modal).
   function openSet(){
-    qrReset();
     refreshErrLog();  // tampilkan log error terbaru saat modal dibuka
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
     document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
     document.getElementById('setModal').classList.add('show');
     setTimeout(()=>document.getElementById('setToken').focus(),60);
   }
-  function tutupSet(){ qrStop(); document.getElementById('setModal').classList.remove('show'); }
+  function tutupSet(){ document.getElementById('setModal').classList.remove('show'); }
 
-  // ---- QR login (device pairing via Z One SSO) ----
-  // State polling: matikan kalau modal ditutup / sukses / expired. Guard
-  // interval tunggal (qrStart saat polling aktif = no-op agar tak dobel poll).
-  let qrTimer=null, qrCode=null, qrBase='', qrDeadline=0;
-  function qrReset(){
-    qrTimer && clearInterval(qrTimer); qrTimer=null; qrCode=null;
-    const b=document.getElementById('qrBox'); if(b) b.style.display='none';
-    document.getElementById('setModal') && document.getElementById('setModal').classList.remove('qrmode');
-    const m=document.getElementById('qrMsg'); if(m) m.textContent='';
-    const btn=document.getElementById('qrBtn'); if(btn){ btn.style.display=''; btn.disabled=false; }
+  // ---- login PIN multiuser (perangkat) ----
+  // Kasir pilih akun (pengingat username) + masukkan PIN 6 angka. PIN diverif
+  // LOKAL di SQLite (bcrypt) supaya offline tetap bisa login. 5x salah → lock.
+  let kasirAktif = JSON.parse(localStorage.getItem('zpos_kasir')||'null'); // {id, nama}
+  function refKasir(){ // tampilkan badge kasir aktif di header
+    const el=document.getElementById('kasirNama');
+    if(el) el.textContent = kasirAktif ? kasirAktif.nama : '';
+    document.getElementById('loginHead').textContent = kasirAktif ? 'Ganti Kasir' : 'Login Kasir';
   }
-  function qrStop(){ if(qrTimer){ clearInterval(qrTimer); qrTimer=null; } }
-  function qrStart(){
-    if(qrTimer) return; // sudah dalam proses polling
-    const base=document.getElementById('setUrl').value.trim();
-    if(!base){ toast('Base URL wajib diisi'); return; }
-    const btn=document.getElementById('qrBtn');
-    btn.disabled=true; btn.style.display='none';
-    document.getElementById('setModal').classList.add('qrmode'); // lebarin modal utk QR 640
-    const box=document.getElementById('qrBox'), msg=document.getElementById('qrMsg');
-    msg.textContent='Membuat kode QR...';
-    box.style.display='block'; box.innerHTML='';
-    tinv('qr_login',{baseUrl:base})
-      .then(raw=>{
-        const r=JSON.parse(raw);
-        qrCode=r.session_id; qrBase=base;
-        qrDeadline=Date.now()+(r.ttl_seconds||60)*1000;
-        box.innerHTML='<div style="background:#fff;border:12px solid #fff;display:inline-block;width:640px;border-radius:16px;overflow:hidden">'+
-          imgSvg(r.svg)+'</div>';
-        msg.textContent='Scan pakai HP: buka Z One, ketuk ikon kamera (Scan QR Login). Kode berlaku '+ (r.ttl_seconds||60) +' detik.';
-        box.style.display='block';
-        msg.style.display='block';
-        // polling tiap 1.5 detik sampai done/expired
-        qrStartPoll();
+  function bukaLogin(){
+    document.getElementById('loginMsg').textContent='';
+    document.getElementById('loginPin').value='';
+    const sel=document.getElementById('loginUser'); sel.innerHTML='<option value="">— pilih nama —</option>';
+    refKasir();
+    if(zposIsTauri()){
+      tinv('list_users').then(us=>{
+        (us||[]).forEach(u=>{
+          const o=document.createElement('option'); o.value=u.id; o.textContent=u.nama+(u.role==='admin'?' (admin)':'');
+          sel.appendChild(o);
+        });
+        if(!us.length) document.getElementById('loginMsg').textContent='Belum ada akun. Sinkron dulu sebagai admin (Pengaturan → token) utk tarik daftar staff.';
+      }).catch(e=>{ document.getElementById('loginMsg').textContent='Gagal muat daftar staff: '+(e&&e.message?e.message:e); });
+    }
+    document.getElementById('loginModal').classList.add('show');
+    setTimeout(()=>document.getElementById('loginUser').focus(),60);
+  }
+  function tutupLogin(){ document.getElementById('loginModal').classList.remove('show'); }
+  function loginPilihUser(){ document.getElementById('loginMsg').textContent=''; }
+  function doLogin(){
+    const sel=document.getElementById('loginUser');
+    const uid=Number(sel.value||0);
+    const pin=document.getElementById('loginPin').value;
+    if(!uid){ document.getElementById('loginMsg').textContent='Pilih akun dulu'; return; }
+    if(pin.length!==6){ document.getElementById('loginMsg').textContent='PIN harus 6 angka'; return; }
+    document.getElementById('loginBtn').disabled=true;
+    tinv('login_pin',{userId:uid, pin})
+      .then(ok=>{
+        document.getElementById('loginBtn').disabled=false;
+        if(ok){
+          const nama=sel.options[sel.selectedIndex]?.textContent.replace(' (admin)','')||'';
+          kasirAktif={id:uid, nama};
+          localStorage.setItem('zpos_kasir',JSON.stringify(kasirAktif));
+          refKasir(); tutupLogin(); toast('Selamat datang, '+nama);
+        }
       })
       .catch(e=>{
-        btn.style.display=''; btn.disabled=false;
-        const errMsg=(e&&e.message?e.message:e)||'';
-        let pesan;
-        if(/network|connect|resolve|Failed to fetch|dns/i.test(errMsg))
-          pesan='Tidak dapat menghubungi server QR. Cek Base URL (https://zpos.zomet.my.id) & koneksi internet.';
-        else
-          pesan='Gagal mulai QR: '+errMsg;
-        msg.textContent=pesan;
-        showErr('QR login gagal: '+pesan);
-        logErr('QR', 'qrStart gagal: '+errMsg);
+        document.getElementById('loginBtn').disabled=false;
+        document.getElementById('loginMsg').textContent=(e&&e.message?e.message:e);
+        if(/kunci/i.test(String(e&&e.message?e.message:e))) logErr('PIN','terkunci: '+(e&&e.message?e.message:e));
       });
   }
-  // Ambil SVG QR dari Rust, set ukuran tampilan 340px. SVG sudah bawa
-  // width='340' height='340' (dari Rust svg_qr); biarkan utuh. Hanya tambah
-  // width 340 bila SVG bawaan sama sekali TAK punya atribut width (defense).
-  // Juga repair viewBox bila terpotong spt '0 0 ' (exe lama) biar tak error browser.
-  function imgSvg(s){
-    if(!s) return '';
-    s = s.replace(/viewBox\s*=\s*['"]0\s+0\s+['"]/, "viewBox='0 0 21 21'");
-    if(/<svg[^>]*\bwidth\s*=/.test(s)) return s;   // sudah ada width (single/double quote)
-    return s.replace(/<svg/, '<svg width="340" height="340"');
-  }
-  function qrStartPoll(){
-    qrTimer=setInterval(async()=>{
-      if(!qrCode){ qrStop(); return; }
-      try{
-        const raw=await tinv('qr_poll',{baseUrl:qrBase, sessionId:qrCode});
-        const r=JSON.parse(raw);
-        const msg=document.getElementById('qrMsg');
-        if(r.status==='done'){
-          qrStop();
-          const token=r.token||'';
-          localStorage.setItem('zpos_token',token);
-          document.getElementById('setToken').value=token;
-          msg.textContent='Login berhasil. Sinkron otomatis...';
-          qrDoneSync(token);
-        } else if(r.status==='expired' || Date.now()>qrDeadline){
-          qrStop();
-          msg.textContent='Kode QR kedaluwarsa. Tekan tombol untuk buat baru.';
-          const btn=document.getElementById('qrBtn');
-          btn.style.display=''; btn.disabled=false;
-          document.getElementById('qrBox').style.display='none';
-        } else {
-          // pending: hitung mundur
-          const left=Math.max(0,Math.round((qrDeadline-Date.now())/1000));
-          msg.textContent='Menunggu scan... sisa '+left+' detik.';
-        }
-      }catch(e){
-        qrStop();
-        const errMsg=(e&&e.message?e.message:e)||'';
-        const btn=document.getElementById('qrBtn');
-        btn.style.display=''; btn.disabled=false;
-        // Terjemahkan error khas QR → pesan jelas utk kasir (jangan "Polling gagal" generik).
-        let pesan;
-        if(/tidak terdaftar/i.test(errMsg) || /404/i.test(errMsg))
-          pesan='QR discan, tapi email akun belum terdaftar/aktif di ZPos. Login Z One pakai email owner, lalu coba lagi.';
-        else if(/401|Unauthorized/i.test(errMsg))
-          pesan='Sesi QR kedaluwarsa saat verifikasi. Buat QR baru & scan ulang.';
-        else
-          pesan='Gagal verifikasi QR: '+errMsg;
-        document.getElementById('qrMsg').textContent=pesan;
-        document.getElementById('qrBox').style.display='none';
-        showErr('QR login gagal: '+pesan);
-        logErr('QR', 'qrPoll gagal: '+errMsg);
-      }
-    },1500);
-  }
-  function qrDoneSync(token){
-    const base=document.getElementById('setUrl').value.trim();
-    localStorage.setItem('zpos_base',base);
-    tinv('sync_remote',{baseUrl:base, token})
-      .then(r=>{ tutupSet(); toast('Tersambung & sinkron: '+r); initKasir(); })
-      .catch(e=>{ tutupSet(); showErr('Tersambung, sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'post-QR sync gagal: '+(e&&e.message?e.message:e)); });
-  }
+  document.getElementById('loginModal')?.addEventListener('click',e=>{ if(e.target.id==='loginModal' && kasirAktif) tutupLogin(); });
+
   function saveSet(){
     const base=document.getElementById('setUrl').value.trim();
     const token=document.getElementById('setToken').value.trim();
@@ -713,6 +668,8 @@
   status(); clock(); setInterval(clock,10000);
   setInterval(autoSync,60000);   // auto-sinkron (produk/member/antrian) tiap 60s saat online
   initKasir();
+  refKasir();
+  if(!kasirAktif) setTimeout(bukaLogin,400); // wajib pilih kasir sebelum transaksi
 </script>
 </body>
 </html>

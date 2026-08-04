@@ -3,7 +3,6 @@
 // Frontend: HTML/CSS/JS di webview, komunikasi via Tauri `invoke`.
 
 mod db;
-mod qrauth;
 mod sync;
 
 use db::AppDb;
@@ -105,14 +104,23 @@ struct SimpanTrx {
     produk: Vec<Value>, // [{id, qty, harga}]
     metode: String,
     total: i64,
+    #[serde(default)]
+    user_id: Option<i64>,
+    #[serde(default)]
+    user_nama: Option<String>,
 }
 
 #[tauri::command]
 fn antri_transaksi(state: State<AppState>, t: SimpanTrx) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO antrian (client_ref,produk,metode,total,dibuat_at) VALUES (?1,?2,?3,?4,datetime('now'))",
-        rusqlite::params![t.client_ref, serde_json::to_string(&t.produk).map_err(|e| e.to_string())?, t.metode, t.total],
+        "INSERT INTO antrian (client_ref,produk,metode,total,dibuat_at,user_id,user_nama)
+         VALUES (?1,?2,?3,?4,datetime('now'),?5,?6)",
+        rusqlite::params![
+            t.client_ref,
+            serde_json::to_string(&t.produk).map_err(|e| e.to_string())?,
+            t.metode, t.total, t.user_id, t.user_nama
+        ],
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -122,6 +130,82 @@ fn jumlah_antrian(state: State<AppState>) -> Result<i64, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM antrian", [], |r| r.get(0)).unwrap_or(0);
     Ok(n)
+}
+
+// ---------- login PIN multiuser offline ----------
+#[derive(Serialize)]
+struct UserLokalRow {
+    id: i64,
+    nama: String,
+    email: String,
+    role: String,
+    aktif: bool,
+}
+
+// Daftar user utk pengingat username di layar login. TAK sertakan pin_hash
+// ke frontend — Rust yg verifikasi, JS cuma dapat pilihan nama.
+#[tauri::command]
+fn list_users(state: State<AppState>) -> Result<Vec<UserLokalRow>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut st = conn.prepare(
+        "SELECT id, nama, email, role, aktif FROM users_lokal WHERE aktif=1 ORDER BY nama"
+    ).map_err(|e| e.to_string())?;
+    let rows = st.query_map([], |r| Ok(UserLokalRow{
+        id: r.get(0)?, nama: r.get(1)?, email: r.get(2)?,
+        role: r.get(3)?, aktif: r.get::<_,i64>(4)? != 0,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
+}
+
+// Verifikasi PIN 6 angka utk user_id, DIPERIKSA LOKAL terhadap pin_hash
+// (bcrypt) di users_lokal. Offline & online sama. Attempt-lock: 5x gagal
+// berturut-turut → kunci user tsb (perlu sync/online reset via lock reset).
+#[tauri::command]
+fn login_pin(state: State<AppState>, user_id: i64, pin: String) -> Result<bool, String> {
+    // Validasi PIN bentuk: 6 digit angka (cegah payload ganjil).
+    if pin.len() != 6 || !pin.chars().all(|c| c.is_ascii_digit()) {
+        return Err("PIN harus 6 angka".into());
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Attempt-lock: counter gagal disimpan di meta per user.
+    let key = format!("pin_fail_{user_id}");
+    let fail: i64 = conn.query_row(
+        "SELECT COALESCE(v,0) FROM meta WHERE k=?1", [&key],
+        |r| r.get(0),
+    ).unwrap_or(0);
+    if fail >= 5 {
+        return Err("Terlalu banyak percobaan. Minta admin reset / sync ulang.".into());
+    }
+
+    let hash: Option<String> = conn.query_row(
+        "SELECT pin_hash FROM users_lokal WHERE id=?1 AND aktif=1", [user_id],
+        |r| r.get(0),
+    ).ok();
+    let Some(hash) = hash else {
+        return Err("User tidak ditemukan atau nonaktif.".into());
+    };
+    if hash.is_empty() {
+        return Err("User belum punya PIN. Minta admin set PIN.".into());
+    }
+
+    let ok = bcrypt::verify(&pin, &hash).map_err(|e| format!("verify: {e}"))?;
+    if !ok {
+        let n = fail + 1;
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES (?1,?2)
+             ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            rusqlite::params![&key, n.to_string()],
+        ).map_err(|e| e.to_string())?;
+        if n >= 5 {
+            return Err("PIN salah. Akun dikunci (5x gagal).".into());
+        }
+        return Err(format!("PIN salah ({n}x)."));
+    }
+
+    // Sukses → reset counter gagal.
+    conn.execute("DELETE FROM meta WHERE k=?1", [&key]).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 // Panggil sinkron: tarik katalog+member, lalu kirim antrian. Butuh base_url + token.
@@ -136,19 +220,28 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
 
-    let r = (|| -> Result<(usize, usize, usize, usize), String> {
+    let r = (|| -> Result<(usize, usize, usize, usize, usize), String> {
         let n_kat = c.pull_kategori(conn)?;
         let n_produk = c.pull_produk(conn)?;
         let n_member = c.pull_member(conn)?;
+        // pull_users best-effort: cuma admin boleh (403 utk kasir). Kasir TETAP
+        // bisa sinkron katalog/member; gagal tarik user TIDAK merusak sync.
+        let n_user = match c.pull_users(conn) {
+            Ok(n) => n,
+            Err(e) => {
+                submit_log(&app, &format!("sync pull_users SKIP: {e}"));
+                0
+            }
+        };
         let n_push = c.push_antrian(conn)?;
-        Ok((n_kat, n_produk, n_member, n_push))
+        Ok((n_kat, n_produk, n_member, n_user, n_push))
     })();
     match &r {
-        Ok((k, p, m, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} member={m} push={s}")),
+        Ok((k, p, m, u, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} member={m} user={u} push={s}")),
         Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
     }
-    let (n_kat, n_produk, n_member, n_push) = r?;
-    Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, push {n_push}"))
+    let (n_kat, n_produk, n_member, n_user, n_push) = r?;
+    Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, user {n_user}, push {n_push}"))
 }
 
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
@@ -166,49 +259,10 @@ fn buka_devtools(win: WebviewWindow) {
     let _ = win.open_devtools();
 }
 
-// Mulai QR login: minta qrSession Z One, render QR (SVG), balik JSON
-// {session_id, token, svg, url, ttl_seconds} utk frontend tampilkan + poll.
-// Di-log di sisi Rust (bukan cuma frontend) biar jejak ada walau JS mati.
-#[tauri::command]
-fn qr_login(app: tauri::AppHandle, base_url: String) -> Result<String, String> {
-    submit_log(&app, "QR start (Z One generate)");
-    match qrauth::start(&base_url) {
-        Ok(raw) => {
-            submit_log(&app, "QR generate OK (session diperoleh)");
-            Ok(raw)
-        }
-        Err(e) => {
-            submit_log(&app, &format!("QR generate GAGAL: {e}"));
-            Err(e)
-        }
-    }
-}
-
-// Poll QR login: cek status qrSession Z One. Balik JSON {status, token?}.
-#[tauri::command]
-fn qr_poll(app: tauri::AppHandle, base_url: String, session_id: String) -> Result<String, String> {
-    match qrauth::poll(&session_id, &base_url) {
-        Ok(raw) => {
-            // Log status singkat dari respons (jangan bocorkan token).
-            let status = raw
-                .split('"')
-                .skip_while(|s| *s != "status")
-                .nth(1)
-                .unwrap_or("pending");
-            submit_log(&app, &format!("QR poll status={status}"));
-            Ok(raw)
-        }
-        Err(e) => {
-            submit_log(&app, &format!("QR poll GAGAL: {e}"));
-            Err(e)
-        }
-    }
-}
-
 // ---------- log error utk diagnosa ----------
 // Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
-// `submit_log` = helper internal yg dipakai command backend (QR/sync) dgn AppHandle,
+// `submit_log` = helper internal yg dipakai command backend (sync) dgn AppHandle,
 // biar jejak error bisa direkam MESKI frontend/JS mati atau error terjadi di Rust.
 fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -288,7 +342,8 @@ fn run() {
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
-            qr_login, qr_poll, tulis_log, baca_log
+            list_users, login_pin,
+            tulis_log, baca_log
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

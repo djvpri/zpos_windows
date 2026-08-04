@@ -49,13 +49,28 @@ pub fn init(conn: &Connection) -> Result<()> {
         );
 
         -- Antrian transaksi offline. client_ref mencegah duplikat saat push.
+        -- user_id/user_nama: tandai siapa kasir (multiuser 1 perangkat).
         CREATE TABLE IF NOT EXISTS antrian (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             client_ref TEXT NOT NULL,
             produk     TEXT NOT NULL,   -- JSON [{id, qty, harga}]
             metode     TEXT NOT NULL,
             total      INTEGER NOT NULL,
-            dibuat_at  TEXT NOT NULL
+            dibuat_at  TEXT NOT NULL,
+            user_id    INTEGER,
+            user_nama  TEXT
+        );
+
+        -- Daftar user toko yang disinkron dari server (utk login PIN offline).
+        -- pin_hash = bcrypt user.kasir_pin_hash dari server.
+        CREATE TABLE IF NOT EXISTS users_lokal (
+            id       INTEGER PRIMARY KEY,
+            toko_id  INTEGER NOT NULL,
+            nama     TEXT NOT NULL,
+            email    TEXT NOT NULL,
+            role     TEXT NOT NULL,
+            aktif    INTEGER NOT NULL DEFAULT 1,
+            pin_hash TEXT
         );
 
         CREATE TABLE IF NOT EXISTS meta (
@@ -64,5 +79,19 @@ pub fn init(conn: &Connection) -> Result<()> {
         );
         "#,
     )?;
+
+    // Migration idempoten: DB lama (antrian tanpa user_id/user_nama) pakai ALTER.
+    let cols_exist: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('antrian')")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<Vec<_>>>()?;
+    let has_uid = cols_exist.iter().any(|c| c == "user_id");
+    if !has_uid {
+        conn.execute_batch(
+            "ALTER TABLE antrian ADD COLUMN user_id INTEGER;
+             ALTER TABLE antrian ADD COLUMN user_nama TEXT;",
+        )?;
+    }
+
     Ok(())
 }
