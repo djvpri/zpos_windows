@@ -25,22 +25,30 @@ fn endpoint(base: &str, path: &str) -> String {
 }
 
 // Render QR jadi SVG (modul persegi, kontras tinggi utk discan HP).
+// Wajib quiet zone >= 4 modul putih di semua sisi (spec QR): tanpa itu
+// scanner (jsQR di APK Z One) tak bisa deteksi batas QR -> "tak ada respon".
+// qrserver web (QR yang gampang discan) otomatis nambah margin; kita juga.
 fn svg_qr(data: &str) -> String {
     let code = QrCode::with_error_correction_level(data.as_bytes(), EcLevel::M).unwrap();
     let w = code.width();
+    let pad = 4; // quiet zone 4 modul, spec QR minimum
+    let dim = w + 2 * pad;
     let mut svg = String::from(
         "<svg xmlns='http://www.w3.org/2000/svg' width='340' height='340' viewBox='0 0 '",
     );
-    svg.push_str(&w.to_string());
+    svg.push_str(&dim.to_string());
     svg.push(' ');
-    svg.push_str(&w.to_string());
+    svg.push_str(&dim.to_string());
     svg.push_str("' shape-rendering='crispEdges'>");
+    svg.push_str("<rect width='100%' height='100%' fill='white'/>"); // bg putih = quiet zone
     for y in 0..w {
         for x in 0..w {
             if code[(x, y)] == Color::Dark {
+                // offset ke-dalam sebesar pad -> margin putih 4 modul di tiap sisi
                 svg.push_str(&format!(
                     "<rect x='{}' y='{}' width='1' height='1'/>",
-                    x, y
+                    x + pad,
+                    y + pad
                 ));
             }
         }
