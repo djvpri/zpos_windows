@@ -36,6 +36,11 @@
   .search { position:relative; }
   .search input { width:100%; padding:11px 14px 11px 38px; border:1.5px solid #e2e6ee; border-radius:10px; font-size:14px; outline:none; }
   .search input:focus { border-color:#4f7cff; }
+  .searchrow { display:flex; gap:8px; }
+  .searchrow .search { flex:1; }
+  .scanbtn { display:flex; align-items:center; gap:6px; padding:0 14px; border:1.5px solid #e2e6ee; border-radius:10px; background:#fff; color:#4f7cff; font-weight:700; font-size:13px; cursor:pointer; transition:all .15s; white-space:nowrap; }
+  .scanbtn:hover { border-color:#4f7cff; background:#f0f5ff; }
+  .scanbtn.on { background:#4f7cff; border-color:#4f7cff; color:#fff; }
   .search::before { content:''; position:absolute; left:12px; top:50%; translate:0 -50%; font-size:14px; color:#9aa3b5; display:flex; }
   .cats { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
   .cat { flex-shrink:0; padding:6px 12px; border-radius:999px; background:#f1f3f8; font-size:12px; color:#5a6577; cursor:pointer; border:1px solid transparent; }
@@ -198,7 +203,10 @@
   <div class="body">
     <!-- Kiri -->
     <div class="left">
-      <div class="search"><i class="bi bi-search" style="position:absolute;left:12px;top:50%;translate:0 -50%;color:#9aa3b5"></i><input id="q" placeholder="Cari produk..." oninput="render()" /></div>
+      <div class="searchrow">
+        <div class="search"><i class="bi bi-search" style="position:absolute;left:12px;top:50%;translate:0 -50%;color:#9aa3b5"></i><input id="q" placeholder="Cari produk..." oninput="render()" /></div>
+        <button class="scanbtn" id="scanBtn" title="Scan barcode dengan barcode scanner USB" onclick="toggleScan()"><i class="bi bi-upc-scan"></i><span id="scanBtnTxt">Scan</span></button>
+      </div>
       <div class="toolrow">
         <div class="member">
           <div class="pill" id="memberPill" onclick="toggleMember()"><i class="bi bi-person-badge"></i><span id="memberPillTxt">Member</span></div>
@@ -381,6 +389,9 @@
   let CATS = ['Semua'];            // diisi dinamis dari kategori produk (initKasir)
   let curCat = 'Semua';
   let visN = 15;  // jumlah produk tampil per halaman katalog; loadmore menaikkan
+  let scanMode = false;   // mode scan barcode scanner USB aktif
+  let scanBuf = '';       // buffer barcode dari scanner USB
+  let scanLast = 0;       // timestamp char terakhir scanner (deteksi kecepatan)
 
   // invoke helper — Tauri v2. Di browser biasa fallback data demo biar mockup tetap kebayang.
   async function tinv(cmd,args){
@@ -489,6 +500,45 @@
     if(f) f.q++; else cart.push({id,q:1});
     renderCart();
   }
+
+  /* ===== Scan barcode scanner USB =====
+     Mode scan aktif via tombol "Scan". Barcode scanner USB = keyboard HID yang
+     "mengetik" kode + Enter. Krn scanner menembak global window (tak butuh fokus
+     field), listener keydown menangkap & langsung tambah ke keranjang kalau match.
+     Mode ini sengaja EXPLICIT (tombol) biar tak bentrok dgn ketik manual di #q. */
+  function toggleScan(){
+    scanMode=!scanMode;
+    const b=document.getElementById('scanBtn');
+    const t=document.getElementById('scanBtnTxt');
+    if(b) b.classList.toggle('on',scanMode);
+    if(t) t.textContent=scanMode?'Scan ON':'Scan';
+    scanBuf='';
+    if(scanMode) toast('Mode scan aktif — arahkan barcode scanner lalu scan.');
+  }
+  window.addEventListener('keydown', function(e){
+    if(!scanMode) return;
+    const k=e.key;
+    if(k==='Enter'){
+      if(scanBuf.length>=3){
+        const code=scanBuf; scanBuf='';
+        const p=PRODUK.find(p=>p.b && p.b===code);
+        if(p){ add(p.id); }
+        else toast('Barcode tidak dikenal: '+code);
+      }
+      if(e.preventDefault) e.preventDefault();
+      return;
+    }
+    if(k==='Backspace'){ scanBuf=scanBuf.slice(0,-1); return; }
+    if(k==='Tab'||k==='Alt'||k==='Shift'||k==='Control') return;
+    if(k.length===1){
+      const now=Date.now();
+      // reset kalau jeda lama (istirahat scan >120ms → mulai barcode baru)
+      if(scanBuf && now-scanLast>120) scanBuf='';
+      const c=k.toLowerCase();
+      if(/^[a-z0-9\-]$/.test(c)) scanBuf+=c;
+      scanLast=now;
+    }
+  }, true);
   function renderCart(){
     document.getElementById('items').innerHTML=cart.map((c,x)=>{
       const p=PRODUK.find(p=>p.id===c.id);
@@ -722,7 +772,7 @@
     try{
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
-      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id}));
+      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null}));
       MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
