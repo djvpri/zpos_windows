@@ -746,11 +746,10 @@
     }
   }
   function syncNow(){
-    const token=localStorage.getItem('zpos_token');
     const base=localStorage.getItem('zpos_base');
-    if(!token || !base){ openSet(); return; }
+    if(!base){ openSet(); return; }
     toast('Menyinkron...');
-    tinv('sync_remote',{baseUrl:base, token})
+    tinv('sync_remote',{baseUrl:base, token:''})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
       .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'syncNow gagal: '+(e&&e.message?e.message:e)); });
   }
@@ -764,12 +763,14 @@
   // auto-sinkron latar: interval periodik, silent (tanpa toast), guard anti-overlap.
   // cuma jalan kalau kredensial tersimpan; offline (fetch gagal) → skip diam-diam.
   async function autoSync(){
-    const token=localStorage.getItem('zpos_token');
+    // Kredensial jwt dipegang Rust (meta token_jwt hasil setup). Cukup butuh base;
+    // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs). Kalau
+    // kita require localStorage zpos_token (yg ga pernah di-set setup) malah tak pernah sync.
     const base=localStorage.getItem('zpos_base');
-    if(!token || !base || syncing || !zposIsTauri()) return;
+    if(!base || syncing || !zposIsTauri()) return;
     syncing=true;
     try{
-      await tinv('sync_remote',{baseUrl:base, token});
+      await tinv('sync_remote',{baseUrl:base, token:''});
       autoErrShown=false;      // sukses → reset, error berikutnya bisa tampil lagi
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
       await initKasir();
