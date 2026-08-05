@@ -253,6 +253,29 @@ impl SyncClient {
         Ok((n, toko_nama))
     }
 
+    // Tambah member dari kasir (titik jual). POST ke server; server balik member
+    // yg sudah dibuat (dgn id). Insert id ke SQLite lokal supaya konsisten dgn
+    // pull_member nanti. Offline HARUS dihindari di frontend (butuh server utk
+    // alokasi id) — di sini error network ditolak, bukan diantri.
+    pub fn tambah_member(&self, conn: &mut Connection, nama: &str, telepon: &str) -> Result<String, String> {
+        let body = serde_json::json!({ "nama": nama, "telepon": if telepon.trim().is_empty() { Value::Null } else { Value::String(telepon.trim().to_string()) }, "kategori_member_id": Value::Null });
+        let resp = self.http.post(self.endpoint("/api/member"))
+            .header("Cookie", self.auth_cookie())
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(serde::Deserialize)]
+        struct NewMember { id: i64, nama: String, telepon: Option<String>, kategori_member_id: Option<i64> }
+        let m: NewMember = resp.json().map_err(|e| format!("json: {e}"))?;
+        conn.execute(
+            "INSERT INTO member (id,nama,telepon,kategori_member_id) VALUES (?1,?2,?3,?4)
+             ON CONFLICT(id) DO UPDATE SET nama=excluded.nama, telepon=excluded.telepon,
+               kategori_member_id=excluded.kategori_member_id",
+            rusqlite::params![m.id, &m.nama, &m.telepon, m.kategori_member_id],
+        ).map_err(|e| e.to_string())?;
+        Ok(m.nama)
+    }
+
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.
     // client_ref di server mencegah duplikat jika request pas tiba saat koneksi
     // terputus (idempotency — cara yang sama dipakai ZPos web).

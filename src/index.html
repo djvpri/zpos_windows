@@ -44,6 +44,8 @@
   .card .nm { font-size:11px; color:#3b4658; font-weight:600; line-height:1.2; min-height:26px; }
   .card .pr { font-size:12px; color:#167430; font-weight:700; margin-top:4px; }
   .card.low .stk { color:#ef4444; }
+  .card.empty { opacity:.55; cursor:not-allowed; }
+  .card.empty:hover { border-color:#edf0f5; box-shadow:none; transform:none; }
   .stk { font-size:10px; color:#98a2b3; }
   .foot-left { font-size:11px; color:#8a93a5; display:flex; justify-content:space-between; background:#f7f9fc; border-radius:8px; padding:8px 10px; }
   .loadmore-wrap { padding:10px 0 2px; text-align:center; }
@@ -72,7 +74,11 @@
   .paybtns button i { font-size:14px; }
   .paybtns button:hover { border-color:#4f7cff; color:#4f7cff; }
   .paybtns button.on { background:#4f7cff; color:#fff; border-color:#4f7cff; }
-  .pay { margin:12px 16px 16px; padding:15px; border-radius:12px; background:linear-gradient(135deg,#123, #1b4a66); color:#fff; font-size:15px; font-weight:700; border:none; cursor:pointer; text-align:center; transition:.15s; }
+  /* Tombol gantung di atas tombol bayar */
+  .payhang { margin:0 16px 8px; padding:10px; border-radius:10px; border:1.5px dashed #e0a54c; background:#fff8ec; color:#b26a00; font-size:13px; font-weight:700; cursor:pointer; transition:.12s; display:flex; align-items:center; justify-content:center; gap:6px; }
+  .payhang:hover { border-color:#ffb347; background:#fff3dc; }
+  .payhang:disabled { opacity:.4; cursor:not-allowed; background:#f1f3f8; border-color:#dde3ee; color:#98a2b3; }
+  .pay { margin:0 16px 16px; padding:15px; border-radius:12px; background:linear-gradient(135deg,#123, #1b4a66); color:#fff; font-size:15px; font-weight:700; border:none; cursor:pointer; text-align:center; transition:.15s; }
   .pay:hover { filter:brightness(1.1); }
   .pay:active { transform:scale(.98); }
   .offq { display:flex; align-items:center; gap:8px; margin:0 16px 16px; padding:10px 12px; border-radius:10px; border:1.5px dashed #ffb347; color:#b26a00; background:#fff8ec; font-size:12px; }
@@ -191,7 +197,9 @@
         <div class="member">
           <div class="pill" id="memberPill" onclick="toggleMember()"><i class="bi bi-person-badge"></i><span id="memberPillTxt">Member</span></div>
           <div class="mwin" id="mwin">
-            <div class="mhead">PILIH MEMBER</div>
+            <div class="mhead" style="display:flex;justify-content:space-between;align-items:center">PILIH MEMBER
+              <button onclick="bukaAddMember()" title="Daftarkan member baru" style="background:#4f7cff;color:#fff;border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer"><i class="bi bi-person-plus"></i> Baru</button>
+            </div>
             <div id="mList"></div>
           </div>
         </div>
@@ -220,6 +228,7 @@
         <button id="mQris"><i class="bi bi-qr-code"></i> QRIS</button>
         <button id="mTrf"><i class="bi bi-bank"></i> Transfer</button>
       </div>
+      <button class="payhang" id="payHang" onclick="simpanBon()" disabled title="Gantung transaksi (butuh member)"><i class="bi bi-bookmark-plus"></i> Gantung Bon</button>
       <button class="pay" onclick="bayar()">BAYAR</button>
       <div class="offq" id="offq"><span class="n" id="offqN">0</span><span id="offqTxt">transaksi offline belum tersinkron</span>
         <span id="simOnline" style="margin-left:auto;font-size:11px;opacity:.7"><i class="bi bi-arrow-repeat"></i> Sinkronkan</span></div>
@@ -252,6 +261,20 @@
   <div class="mc">
     <div class="mch"><span><i class="bi bi-list-ul"></i> Bon Gantung</span><span class="x" onclick="tutupBon()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb" id="bonList"></div>
+  </div>
+</div>
+
+<!-- Modal daftar member baru (kasir daftarkan pelanggan di titik jual) -->
+<div class="modal" id="addMemberModal">
+  <div class="mc" style="max-width:360px">
+    <div class="mch"><span><i class="bi bi-person-plus"></i> Daftarkan Member</span><span class="x" onclick="tutupAddMember()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <p id="amNote" style="font-size:12px;color:#5a6577;margin-bottom:10px">Pelanggan perlu terdaftar di server (butuh online). Diskon/kategori member diatur oleh admin.</p>
+      <div class="fld"><label>Nama member</label><input id="amNama" placeholder="nama lengkap" autocomplete="off" /></div>
+      <div class="fld"><label>Telepon (opsional)</label><input id="amTelp" placeholder="nomor telepon" inputmode="numeric" autocomplete="off" /></div>
+      <p id="amMsg" style="font-size:12px;color:#c62828;margin:0 0 8px;min-height:16px"></p>
+      <button class="sbtn" id="amBtn" onclick="doAddMember()"><i class="bi bi-person-plus"></i> Daftarkan</button>
+    </div>
   </div>
 </div>
 
@@ -429,15 +452,19 @@
     const g=document.getElementById('grid');
     const list=PRODUK.filter(p=>(curCat==='Semua' || p.k===curCat) && p.n.toLowerCase().includes(q));
     g.innerHTML=list.slice(0,visN).map(p=>
-      `<div class="card ${p.s<5?'low':''}" onclick="add(${p.id})">
+      `<div class="card ${p.s<=0?'empty':(p.s<5?'low':'')}" onclick="${p.s>0?`add(${p.id})`:'void(0)'}">
         <div class="ph"><i class="bi ${p.e||'bi-box'}"></i></div><div class="nm">${p.n}</div>
-        <div class="pr">${fmt(p.p)}</div><div class="stk">stok ${p.s}</div>
+        <div class="pr">${p.s>0?fmt(p.p):'<span style=\"color:#c3c9d6\">Stok habis</span>'}</div><div class="stk">${p.s>0?`stok ${p.s}`:''}</div>
       </div>`).join('');
     const lm=document.getElementById('loadMoreWrap');
     if(list.length>visN){ lm.classList.remove('hidden'); } else { lm.classList.add('hidden'); }
   }
   function add(id){
+    const p=PRODUK.find(p=>p.id===id); if(!p) return;
+    if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
     const f=cart.find(c=>c.id===id);
+    const q=(f?f.q:0)+1;
+    if(q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     if(f) f.q++; else cart.push({id,q:1});
     renderCart();
   }
@@ -450,7 +477,7 @@
       const tampi = pakai ? hm : p.p;
       return `<div class="item">
         <div class="meta"><div class="n">${p.n}</div><div class="p">${pakai?`<span class="gores">${fmt(p.p)}</span>`:''}${fmt(tampi)}${pakai?'<span class="member-tag">MEMBER</span>':''}</div></div>
-        <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)">+</button></div>
+        <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)" ${c.q>=p.s?'disabled style="opacity:.35;cursor:not-allowed"':''}>+</button></div>
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
     const sub=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
@@ -460,10 +487,16 @@
     document.getElementById('disc').textContent='-'+fmt(disc);
     document.getElementById('total').textContent=fmt(sub-disc);
     document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
+    const ph=document.getElementById('payHang'); if(ph) ph.disabled = !cart.length || !member;
     const aktif=bon.length;
     document.getElementById('bonBadge').innerHTML = aktif?`<span class="badge">${aktif}</span>`:'';
   }
-  function chg(x,d){ const c=cart[x]; c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart(); }
+  function chg(x,d){
+    const c=cart[x];
+    const p=PRODUK.find(p=>p.id===c.id);
+    if(d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
+  }
   function clearCart(){ cart=[]; renderCart(); }
 
   /* ===== Member ===== */
@@ -475,6 +508,47 @@
       return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
     }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
   }
+  /* ===== Tambah member (kasir daftarkan pelanggan, butuh online) ===== */
+  function bukaAddMember(){
+    document.getElementById('amMsg').textContent = '';
+    document.getElementById('amNama').value = '';
+    document.getElementById('amTelp').value = '';
+    document.getElementById('mwin').classList.remove('show');
+    document.getElementById('addMemberModal').classList.add('show');
+    setTimeout(()=>document.getElementById('amNama').focus(),60);
+  }
+  function tutupAddMember(){ document.getElementById('addMemberModal').classList.remove('show'); }
+  document.getElementById('addMemberModal')?.addEventListener('click', e=>{ if(e.target.id==='addMemberModal') tutupAddMember(); });
+  function doAddMember(){
+    const nama=document.getElementById('amNama').value.trim();
+    const telp=document.getElementById('amTelp').value.trim();
+    const msg=document.getElementById('amMsg');
+    if(!nama){ msg.textContent='Nama member wajib diisi'; return; }
+    if(offline){ msg.textContent='Offline. Daftarkan member saat terhubung ke server.'; return; }
+    if(!zposIsTauri()){ msg.textContent='Mode demo — tak ada server.'; return; }
+    const base=localStorage.getItem('zpos_base');
+    if(!base){ msg.textContent='Belum di-setup. Isi Base URL dulu (Pengaturan).'; return; }
+    const btn=document.getElementById('amBtn'); btn.disabled=true; btn.textContent='Menyimpan…';
+    tinv('tambah_member',{baseUrl:base, nama, telepon:telp})
+      .then(()=>{
+        btn.disabled=false; btn.innerHTML='<i class="bi bi-person-plus"></i> Daftarkan';
+        tutupAddMember();
+        toast('Member '+nama+' terdaftar');
+        // Tarik member terbaru dari DB ke MEMBERS biar langsung tampil di daftar
+        // pilih (dgn diskon kategori). Gagal → daftar tetap seperti sebelumnya.
+        tinv('list_member').then(mis=>{
+          MEMBERS = mis.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
+          renderMemberList();
+        }).catch(()=>renderMemberList());
+      })
+      .catch(e=>{
+        btn.disabled=false; btn.innerHTML='<i class="bi bi-person-plus"></i> Daftarkan';
+        const m=e&&e.message?e.message:e;
+        msg.textContent='Gagal daftar member: '+m;
+        logErr('MEMB', 'tambah member gagal: '+m);
+      });
+  }
+
   async function pilihMember(id){
     const m=MEMBERS.find(m=>m.id===id); if(!m) return;
     // Harga efektif member dihitung backend (Rust). Demo fallback pakai peta statis.
@@ -536,6 +610,14 @@
   function bayar(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!kasirAktif){ bukaLogin(); toast('Masuk dulu pilih kasir & PIN'); return; }
+    // Cegah jual barang stok 0 / melebihi stok (duplicate guard dari add/chg —
+    // di sini jaga bila stok berubah via auto-sync setelah barang masuk keranjang).
+    for(const c of cart){
+      const p=PRODUK.find(p=>p.id===c.id);
+      if(!p) continue;
+      if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+      if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    }
     // Bangun payload penuh persis format server ZPos web (GET/POST /api/transaksi
     // terima { trx, items }). Disimpan utuh di antrian; push_antrian kirim apa adanya.
     const items = cart.map(c=>{

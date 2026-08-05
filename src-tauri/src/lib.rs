@@ -271,6 +271,27 @@ fn setup_kasir(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     Ok(format!("{} ({} kasir)", toko, n))
 }
 
+// Kasir mendaftarkan pelanggan baru (titik jual). Butuh online + token server;
+// frontend mengecek status offline sebelum memanggil. Sukses → member masuk ke
+// SQLite lokal dgn id server (konsisten dgn pull_member), balik nama.
+#[tauri::command]
+fn tambah_member(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, telepon: String) -> Result<String, String> {
+    let nama = nama.trim().to_string();
+    if nama.is_empty() { return Err("Nama member wajib diisi".into()); }
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.tambah_member(conn, &nama, &telepon);
+    match &r {
+        Ok(n) => submit_log(&app, &format!("member tambah OK nama={n}")),
+        Err(e) => submit_log(&app, &format!("member tambah GAGAL: {e}")),
+    }
+    r
+}
+
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
 fn mask(t: &str) -> String {
     if t.is_empty() { "KOSONG".into() }
@@ -384,7 +405,7 @@ fn run() {
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
             list_users, login_pin,
-            setup_kasir,
+            setup_kasir, tambah_member,
             versi_app,
             buka_url,
             tulis_log, baca_log
