@@ -338,6 +338,57 @@ fn buka_url(url: String) -> Result<(), String> {
     opener::open(&url).map_err(|e| format!("gagal buka tautan: {e}"))
 }
 
+// ---------- updater in-app (portable, anti-SmartScreen) ----------
+// Update diunduh dari DALAM app via reqwest (bukan browser). File yg ditulis
+// stream bytes TIDAK membawa Zone.Identifier / Mark-of-the-Web → bila dijalankan
+// lewat swap update, Windows TIDAK lagi menampilkan SmartScreen "aplikasi tidak
+// dikenal" (yang muncul hanya utk file unduhan browser). Trojan fallback saat
+// gagal swap: app lama tetap utuh, update.bin dibiarkan utk retry manual.
+
+// Unduh exe baru ke app_data mengikuti pola atomic (nama temp → rename).
+#[tauri::command]
+fn unduh_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    if std::fs::create_dir_all(&dir).is_err() { return Err("gagal akses app_data".into()); }
+    let tmp = dir.join("zpos-kasir.new.tmp");
+    let target = dir.join("zpos-kasir.new.exe");
+    let resp = reqwest::blocking::get(&url).map_err(|e| format!("unduh gagal: {e}"))?;
+    if !resp.status().is_success() { return Err(format!("server balas HTTP {}", resp.status())); }
+    let bytes = resp.bytes().map_err(|e| format!("baca response gagal: {e}"))?;
+    if bytes.len() < 100_000 { return Err("file unduhan mencurigakan kecil".into()); }
+    std::fs::write(&tmp, &bytes).map_err(|e| format!("tulis file gagal: {e}"))?;
+    if std::fs::rename(&tmp, &target).is_err() && !target.exists() { return Err("atur ulang nama gagal".into()); }
+    Ok(target.to_string_lossy().into())
+}
+
+// Spawn cmd detach (2s delay biar app sempat exit) utk hapus exe lama → pindah
+// exe baru → relaunch di tempat lama. Balik OK → frontend langsung keluar app.
+#[tauri::command]
+fn terapkan_update(app: tauri::AppHandle, target_path: String, versi_baru: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let me = std::env::current_exe().map_err(|e| format!("path exe gagal: {e}"))?;
+    let me_s = me.to_string_lossy().replace('/', "\\");
+    let new_s = target_path.replace('/', "\\");
+    let script = format!(
+        "timeout /t 2 /nobreak >nul & del /f /q {me} & move /y {new} {me} & start \"\" {me}",
+        me = format!("\"{}\"", me_s), new = format!("\"{}\"", new_s)
+    );
+    let _ = submit_log(&app, &format!("menerapkan update ke {}", versi_baru));
+    // spawn tanpa .wait() → detach. Setelah app.exit(), cmd menunggu 2 detik,
+    // hapus binary lama, pindah exe baru, relaunch di lokasi asal.
+    std::process::Command::new("cmd.exe")
+        .args(["/C", script.as_str()])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW — tanpa console
+        .spawn()
+        .map_err(|e| format!("spawn updater gagal: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn keluar(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 // ---------- log error utk diagnosa ----------
 // Frontend tulis error/time/pesan ke file teks di app_data_dir. Backend simpan
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
@@ -433,6 +484,7 @@ fn run() {
             setup_kasir, tambah_member, list_kategori_member,
             versi_app,
             buka_url,
+            unduh_update, terapkan_update, keluar,
             tulis_log, baca_log
         ])
         .run(tauri::generate_context!())

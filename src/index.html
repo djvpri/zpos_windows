@@ -773,16 +773,32 @@
             document.getElementById('upTxt').textContent='Update v'+latest+' tersedia';
             const exe=(rel.assets||[]).find(a=>a.name==='zpos-kasir.exe');
             document.getElementById('upBtn').onclick=()=>{
-              const url=exe?exe.browser_download_url:rel.html_url;
-              // `window.open` di WebView2 Tauri sering diblokir diam-diam → buka
-              // lewat Rust `buka_url` (crate opener) yg buka browser default OS.
-              if(window.__TAURI__) tinv('buka_url',{url}).catch(()=>{});
-              else window.open(url,'_blank');
+              const url=exe?exe.browser_download_url:null;
+              if(zposIsTauri()) doUpdate(url, latest);
+              else if(url) window.open(url,'_blank');
             };
             bar.classList.remove('hidden');
           }
         }).catch(()=>{});   // offline/rate-limit → diam, bukan error
     }).catch(()=>{});
+  }
+
+  // Update in-app: unduh exe via Rust (bukan browser → tanpa SmartScreen),
+  // swap + relaunch di lokasi lama, lalu keluar app biar cmd menerapkan.
+  async function doUpdate(url, latest){
+    if(!url){ toast('Asset update tak ditemukan'); return; }
+    const btn=document.getElementById('upBtn');
+    btn.disabled=true; btn.textContent='Mengunduh...';
+    try{
+      const path=await tinv('unduh_update',{url});
+      logErr('UPDT','unduh v'+latest+' siap');
+      toast('Update '+latest+' terunduh — aplikasi akan restart');
+      await tinv('terapkan_update',{target_path:path, versi_baru:latest});
+      setTimeout(()=>tinv('keluar').catch(()=>{}), 400);
+    }catch(e){
+      showErr('Update gagal: '+e);
+      btn.disabled=false; btn.textContent='Perbarui';
+    }
   }
 
   // sinkron manual: tarik katalog/member dari server ZPos + push antrian.
