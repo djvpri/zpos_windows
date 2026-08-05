@@ -12,8 +12,14 @@
   .frame { background:#fff; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.15); overflow:hidden; width:100%; }
   /* Header */
   .hdr { display:flex; align-items:center; gap:12px; padding:12px 16px; background:#1e2f4d; color:#fff; }
-  .hdr .logo { font-weight:800; letter-spacing:.5px; font-size:15px; }
-  .hdr .logo span { color:#7aa7ff; }
+  .hdr .logo { display:flex; align-items:center; }
+  .hdr .logo img { height:26px; width:auto; display:block; }
+  /* Badge kasir aktif — nama user besar & kontras tinggi */
+  .kasirpill { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:5px 12px; cursor:pointer; transition:.12s; }
+  .kasirpill:hover { background:rgba(255,255,255,.2); }
+  .kasirpill .bi { color:#9ec5ff; font-size:15px; }
+  .kasirpill #kasirNama { font-size:13px; font-weight:700; color:#fff; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .kasirpill.anon #kasirNama { color:#c9d4e8; font-weight:500; }
   .conn { display:flex; align-items:center; gap:6px; font-size:12px; padding:4px 10px; border-radius:999px; }
   .conn.on { background:rgba(34,197,94,.18); color:#7ef0a8; }
   .conn.off { background:rgba(239,68,68,.18); color:#ff9a9a; }
@@ -179,11 +185,11 @@
 
   <!-- Header -->
   <div class="hdr">
-    <div class="logo">Z<span>Pos</span> KASIR</div>
+    <div class="logo"><img src="logo.png" alt="ZPos Kasir" /></div>
     <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
     <div class="right">
       <span id="clock">—</span>
-      <div class="ic" title="Kasir aktif" onclick="bukaLogin()"><i class="bi bi-person-check"></i><span id="kasirNama" style="font-size:11px;margin-left:4px;color:#1971c2"></span></div>
+      <div class="kasirpill" id="kasirPill" title="Kasir aktif — klik untuk ganti" onclick="bukaLogin()"><i class="bi bi-person-check"></i><span id="kasirNama"></span></div>
       <div class="ic" title="Kosongkan" onclick="clearCart()"><i class="bi bi-trash3"></i></div>
       <div class="ic" title="Pengaturan" onclick="openSet()"><i class="bi bi-gear"></i></div>
     </div>
@@ -579,7 +585,11 @@
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
-    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: Number(document.getElementById('total').textContent.replace('Rp','').replace(/\\./g,'')) });
+    // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
+    // renderCart: sub = Σ harga memakai harga member, disc 9%.
+    const sub=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
+    const disc=Math.round(sub*0.09/1000)*1000;
+    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc });
     toast('Bon digantung atas nama '+member.n);
     clearCart();
   }
@@ -748,8 +758,15 @@
   // LOKAL di SQLite (bcrypt) supaya offline tetap bisa login. 5x salah → lock.
   let kasirAktif = JSON.parse(localStorage.getItem('zpos_kasir')||'null'); // {id, nama}
   function refKasir(){ // tampilkan badge kasir aktif di header
-    const el=document.getElementById('kasirNama');
-    if(el) el.textContent = kasirAktif ? kasirAktif.nama : '';
+    const el=document.getElementById('kasirNama'); if(!el) return;
+    const pill=document.getElementById('kasirPill');
+    if(kasirAktif){
+      el.textContent = kasirAktif.nama;
+      pill.classList.remove('anon');
+    }else{
+      el.textContent = 'Pilih kasir';
+      pill.classList.add('anon');
+    }
     document.getElementById('loginHead').textContent = kasirAktif ? 'Ganti Kasir' : 'Login Kasir';
   }
   function bukaLogin(){
