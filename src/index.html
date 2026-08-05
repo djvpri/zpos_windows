@@ -77,6 +77,9 @@
   .pay:active { transform:scale(.98); }
   .offq { display:flex; align-items:center; gap:8px; margin:0 16px 16px; padding:10px 12px; border-radius:10px; border:1.5px dashed #ffb347; color:#b26a00; background:#fff8ec; font-size:12px; }
   .offq .n { background:#ffb347; color:#fff; border-radius:999px; padding:1px 8px; font-weight:800; }
+  /* sudah tersinkron semua — hijau */
+  .offq.ok { border-color:#22c55e; color:#1e7d33; background:#f0fbf4; }
+  .offq.ok .n { background:#22c55e; }
   /* Bar member */
   .toolrow { display:flex; align-items:center; gap:8px; }
   .member { position:relative; }
@@ -218,7 +221,7 @@
         <button id="mTrf"><i class="bi bi-bank"></i> Transfer</button>
       </div>
       <button class="pay" onclick="bayar()">BAYAR</button>
-      <div class="offq" id="offq"><span class="n" id="offqN">0</span> transaksi offline belum tersinkron
+      <div class="offq" id="offq"><span class="n" id="offqN">0</span><span id="offqTxt">transaksi offline belum tersinkron</span>
         <span id="simOnline" style="margin-left:auto;font-size:11px;opacity:.7"><i class="bi bi-arrow-repeat"></i> Sinkronkan</span></div>
     </div>
   </div>
@@ -543,12 +546,12 @@
     };
     if(zposIsTauri()){
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
-        .then(()=>{ offQtn++; document.getElementById('offqN').textContent=offQtn; })
+        .then(()=>{ offQtn++; renderOffQ(); })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
       offQtn++;
     }
-    document.getElementById('offqN').textContent=offQtn;
+    renderOffQ();
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
     clearCart();
@@ -581,7 +584,21 @@
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
     status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ();
   }
-  function renderOffQ(){ document.getElementById('offqN').textContent=offQtn; }
+  function renderOffQ(){
+    const w=document.getElementById('offq'), n=document.getElementById('offqN'), s=document.getElementById('simOnline');
+    if(offQtn===0){
+      // semua transaksi sudah tersinkron → tampilan hijau, sembunyikan tombol sinkron
+      w.classList.add('ok');
+      n.textContent=''; n.classList.add('hidden');
+      document.getElementById('offqTxt').textContent='sudah tersinkron semua';
+      s.classList.add('hidden');
+    }else{
+      w.classList.remove('ok');
+      n.textContent=offQtn; n.classList.remove('hidden');
+      document.getElementById('offqTxt').textContent='transaksi offline belum tersinkron';
+      s.classList.remove('hidden');
+    }
+  }
 
   // Banding semver "1.2.3" (teks). True kalau a >= b utk update check.
   function semverAtas(a,b){
@@ -754,8 +771,10 @@
     try{
       await tinv('sync_remote',{baseUrl:base, token});
       autoErrShown=false;      // sukses → reset, error berikutnya bisa tampil lagi
+      offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
       await initKasir();
     }catch(e){
+      offline=true; status();  // gagal → OFFLINE (server tak reachable / kredensial salah)
       // tanpa toast (anti-ganggu saat bayar), tapi tetap kelihatan di devtools / errbar sekali.
       if(!autoErrShown){ autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e)); }
     }
