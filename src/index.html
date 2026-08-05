@@ -399,7 +399,16 @@
   function status(){ 
     const c=document.getElementById('conn');
     c.className='conn '+(offline?'off':'on');
-    document.getElementById('connTxt').textContent=offline?'Offline':'Online';
+    const t=document.getElementById('connTxt');
+    t.textContent=offline?'Offline':'Online';
+    // Tooltip badge: kalau offline, kasir TAHU transaksi tetap jalan & aman lokal.
+    t.title=offline?'Transaksi tetap bisa dilanjutkan & tersimpan lokal. Terkirim otomatis saat online.'
+                    :'Terhubung ke server. Sinkron otomatis tiap 60 detik.';
+    // Footer status kiri: ganti teks "Sepenuhnya offline" vg statis — kini dinamis per koneksi.
+    document.querySelector('.foot-left').innerHTML =
+      offline
+        ? '<span><i class="bi bi-wifi-off"></i> Offline — transaksi tetap jalan, tersimpan lokal</span><span>Katalog tersimpan lokal</span>'
+        : '<span><i class="bi bi-wifi"></i> Terhubung — sinkron otomatis</span><span>Katalog tersimpan lokal</span>';
   }
   function clock(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
 
@@ -595,7 +604,10 @@
     }else{
       w.classList.remove('ok');
       n.textContent=offQtn; n.classList.remove('hidden');
-      document.getElementById('offqTxt').textContent='transaksi offline belum tersinkron';
+      document.getElementById('offqTxt').innerHTML =
+        (offline ? `${offQtn} transaksi offline tersimpan — tetap bisa transaksi baru.<br>`
+                 : '') +
+        `<strong>${offQtn} transaksi</strong> belum terkirim ke server — antri. ${offline ? 'Terkirim otomatis saat online.' : 'Akan disinkronkan tiap 60 detik.'}`;
       s.classList.remove('hidden');
     }
   }
