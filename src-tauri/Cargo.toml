@@ -1,6 +1,6 @@
 [package]
 name = "zpos-kasir"
-version = "0.1.10"
+version = "0.1.11"
 description = "ZPos Kasir — cashier desktop offline-first (Tauri + SQLite)"
 edition = "2021"
 
@@ -22,6 +22,7 @@ thiserror = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 bcrypt = "0.15"
 opener = "0.7"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 opt-level = 2

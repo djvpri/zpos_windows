@@ -13,7 +13,7 @@
   /* Header */
   .hdr { display:flex; align-items:center; gap:12px; padding:12px 16px; background:#1e2f4d; color:#fff; }
   .hdr .logo { display:flex; align-items:center; }
-  .hdr .logo img { height:26px; width:auto; display:block; }
+  .hdr .logo img { height:40px; width:auto; display:block; object-fit:contain; }
   /* Badge kasir aktif — nama user besar & kontras tinggi */
   .kasirpill { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:5px 12px; cursor:pointer; transition:.12s; }
   .kasirpill:hover { background:rgba(255,255,255,.2); }
@@ -271,6 +271,20 @@
 </div>
 
 <!-- Modal daftar member baru (kasir daftarkan pelanggan di titik jual) -->
+<!-- Konfirmasi hapus bon gantung (cegah salah tekan) -->
+<div class="modal" id="konfBonModal">
+  <div class="mc" style="max-width:320px">
+    <div class="mch"><span><i class="bi bi-trash3"></i> Hapus Bon Gantung</span><span class="x" onclick="tutupKonfBon()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <p id="konfBonTxt" style="font-size:13px;color:#3b4658;margin:0 0 12px">Hapus bon gantung ini? Isi keranjang bon akan hilang dan tidak bisa dikembalikan.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="sbtn" style="background:#e3e6ea;color:#3b4658" onclick="tutupKonfBon()">Batal</button>
+        <button class="sbtn" id="konfBonBtn" style="background:#c62828" onclick="konfirmasiHapusBon()"><i class="bi bi-trash3"></i> Hapus</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="addMemberModal">
   <div class="mc" style="max-width:360px">
     <div class="mch"><span><i class="bi bi-person-plus"></i> Daftarkan Member</span><span class="x" onclick="tutupAddMember()"><i class="bi bi-x-lg"></i></span></div>
@@ -278,6 +292,7 @@
       <p id="amNote" style="font-size:12px;color:#5a6577;margin-bottom:10px">Pelanggan perlu terdaftar di server (butuh online). Diskon/kategori member diatur oleh admin.</p>
       <div class="fld"><label>Nama member</label><input id="amNama" placeholder="nama lengkap" autocomplete="off" /></div>
       <div class="fld"><label>Telepon (opsional)</label><input id="amTelp" placeholder="nomor telepon" inputmode="numeric" autocomplete="off" /></div>
+      <div class="fld"><label>Kategori member</label><select id="amKat" style="width:100%;padding:8px;border-radius:8px;border:1px solid #d6dce5;background:#fff;font-size:13px"><option value="">— Tanpa kategori —</option></select></div>
       <p id="amMsg" style="font-size:12px;color:#c62828;margin:0 0 8px;min-height:16px"></p>
       <button class="sbtn" id="amBtn" onclick="doAddMember()"><i class="bi bi-person-plus"></i> Daftarkan</button>
     </div>
@@ -519,15 +534,34 @@
     document.getElementById('amMsg').textContent = '';
     document.getElementById('amNama').value = '';
     document.getElementById('amTelp').value = '';
+    document.getElementById('amKat').value = '';
+    muatKategoriMember();   // isi dropdown kategori dari server
     document.getElementById('mwin').classList.remove('show');
     document.getElementById('addMemberModal').classList.add('show');
     setTimeout(()=>document.getElementById('amNama').focus(),60);
+  }
+  function muatKategoriMember(){
+    const sel=document.getElementById('amKat'); if(!sel) return;
+    sel.innerHTML = '<option value="">— Tanpa kategori —</option>';
+    if(offline || !zposIsTauri()) return;
+    const base=localStorage.getItem('zpos_base'); if(!base) return;
+    tinv('list_kategori_member',{baseUrl:base})
+      .then(list=>{
+        (list||[]).forEach(k=>{
+          const o=document.createElement('option');
+          o.value=k.id;
+          o.textContent = k.diskon_persen>0 ? `${k.nama} (diskon ${k.diskon_persen}%)` : k.nama;
+          sel.appendChild(o);
+        });
+      }).catch(()=>{ /* offline/tak ada kategori → biarkan kosong */ });
   }
   function tutupAddMember(){ document.getElementById('addMemberModal').classList.remove('show'); }
   document.getElementById('addMemberModal')?.addEventListener('click', e=>{ if(e.target.id==='addMemberModal') tutupAddMember(); });
   function doAddMember(){
     const nama=document.getElementById('amNama').value.trim();
     const telp=document.getElementById('amTelp').value.trim();
+    const kat=document.getElementById('amKat').value;
+    const katId=kat ? Number(kat) : null;
     const msg=document.getElementById('amMsg');
     if(!nama){ msg.textContent='Nama member wajib diisi'; return; }
     if(offline){ msg.textContent='Offline. Daftarkan member saat terhubung ke server.'; return; }
@@ -535,7 +569,7 @@
     const base=localStorage.getItem('zpos_base');
     if(!base){ msg.textContent='Belum di-setup. Isi Base URL dulu (Pengaturan).'; return; }
     const btn=document.getElementById('amBtn'); btn.disabled=true; btn.textContent='Menyimpan…';
-    tinv('tambah_member',{baseUrl:base, nama, telepon:telp})
+    tinv('tambah_member',{baseUrl:base, nama, telepon:telp, kategori_member_id:katId})
       .then(()=>{
         btn.disabled=false; btn.innerHTML='<i class="bi bi-person-plus"></i> Daftarkan';
         tutupAddMember();
@@ -613,7 +647,17 @@
     toast('Bon ditarik');
     renderCart();
   }
-  function hapusBon(x){ bon.splice(x,1); bukaBon(); renderCart(); }
+  let _bonHapusIdx = -1;
+  function hapusBon(x){ _bonHapusIdx = x; document.getElementById('konfBonModal').classList.add('show'); }
+  function tutupKonfBon(){ document.getElementById('konfBonModal').classList.remove('show'); }
+  function konfirmasiHapusBon() {
+    const x = _bonHapusIdx;
+    if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
+    bon.splice(x,1);
+    tutupKonfBon();
+    bukaBon();
+    renderCart();
+  }
   function tutupBon(){ document.getElementById('bonModal').classList.remove('show'); }
   document.getElementById('bonModal').addEventListener('click',e=>{ if(e.target.id==='bonModal') tutupBon(); });
 

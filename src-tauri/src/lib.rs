@@ -275,7 +275,7 @@ fn setup_kasir(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
 // frontend mengecek status offline sebelum memanggil. Sukses → member masuk ke
 // SQLite lokal dgn id server (konsisten dgn pull_member), balik nama.
 #[tauri::command]
-fn tambah_member(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, telepon: String) -> Result<String, String> {
+fn tambah_member(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, telepon: String, kategori_member_id: Option<i64>) -> Result<String, String> {
     let nama = nama.trim().to_string();
     if nama.is_empty() { return Err("Nama member wajib diisi".into()); }
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
@@ -284,10 +284,27 @@ fn tambah_member(state: State<AppState>, app: tauri::AppHandle, base_url: String
         "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
     ).unwrap_or_default();
     let c = sync::SyncClient::new(base_url, meta_tok);
-    let r = c.tambah_member(conn, &nama, &telepon);
+    let r = c.tambah_member(conn, &nama, &telepon, kategori_member_id);
     match &r {
-        Ok(n) => submit_log(&app, &format!("member tambah OK nama={n}")),
+        Ok(n) => submit_log(&app, &format!("member tambah OK nama={n} kat={:?}", kategori_member_id)),
         Err(e) => submit_log(&app, &format!("member tambah GAGAL: {e}")),
+    }
+    r
+}
+
+// Daftar kategori member toko (dropdown saat kasir daftarkan member).
+#[tauri::command]
+fn list_kategori_member(state: State<AppState>, app: tauri::AppHandle, base_url: String) -> Result<Vec<sync::RemoteKategoriMember>, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.list_kategori_member();
+    match &r {
+        Ok(list) => submit_log(&app, &format!("kategori member list OK n={}", list.len())),
+        Err(e) => submit_log(&app, &format!("kategori member list GAGAL: {e}")),
     }
     r
 }
@@ -370,6 +387,14 @@ fn chrono_now() -> String {
 
 fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Hanya satu app ZPos Kasir boleh jalan per perangkat. Peluncuran
+            // kedua → fokus ke window yang sudah terbuka, lalu tutup proses baru.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+                let _ = w.show();
+            }
+        }))
         .setup(|app| {
             let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             if std::fs::create_dir_all(&dir).is_err() {
@@ -405,7 +430,7 @@ fn run() {
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
             list_users, login_pin,
-            setup_kasir, tambah_member,
+            setup_kasir, tambah_member, list_kategori_member,
             versi_app,
             buka_url,
             tulis_log, baca_log

@@ -33,6 +33,14 @@ pub struct RemoteMember {
     pub kategori_member_id: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, serde::Serialize)]
+pub struct RemoteKategoriMember {
+    pub id: i64,
+    pub nama: String,
+    #[serde(default)]
+    pub diskon_persen: f64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RemoteUser {
     pub id: i64,
@@ -173,6 +181,16 @@ impl SyncClient {
         Ok(list.len())
     }
 
+    // Daftar kategori member toko (kasir & admin boleh lihat). Dipakai dropdown
+    // saat kasir mendaftarkan member baru.
+    pub fn list_kategori_member(&self) -> Result<Vec<RemoteKategoriMember>, String> {
+        let resp = self.http.get(self.endpoint("/api/kategori-member"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.json().map_err(|e| format!("json: {e}"))
+    }
+
     // Simpan daftar user ke users_lokal (ganti isi penuh, tanpa ganti baris).
     fn store_users(&self, conn: &mut Connection, body: &RemoteUsersResp) -> Result<(), String> {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -257,8 +275,12 @@ impl SyncClient {
     // yg sudah dibuat (dgn id). Insert id ke SQLite lokal supaya konsisten dgn
     // pull_member nanti. Offline HARUS dihindari di frontend (butuh server utk
     // alokasi id) — di sini error network ditolak, bukan diantri.
-    pub fn tambah_member(&self, conn: &mut Connection, nama: &str, telepon: &str) -> Result<String, String> {
-        let body = serde_json::json!({ "nama": nama, "telepon": if telepon.trim().is_empty() { Value::Null } else { Value::String(telepon.trim().to_string()) }, "kategori_member_id": Value::Null });
+    pub fn tambah_member(&self, conn: &mut Connection, nama: &str, telepon: &str, kategori_member_id: Option<i64>) -> Result<String, String> {
+        let body = serde_json::json!({
+            "nama": nama,
+            "telepon": if telepon.trim().is_empty() { Value::Null } else { Value::String(telepon.trim().to_string()) },
+            "kategori_member_id": kategori_member_id
+        });
         let resp = self.http.post(self.endpoint("/api/member"))
             .header("Cookie", self.auth_cookie())
             .json(&body)
