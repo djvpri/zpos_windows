@@ -88,7 +88,17 @@ pub struct SyncClient {
 
 impl SyncClient {
     pub fn new(base: String, token: String) -> Self {
-        Self { base, token, http: reqwest::blocking::Client::new() }
+        // Timeout total eksplisit — CRITICAL. `reqwest::blocking` default TANPA
+        // timeout (docs 0.12: `timeout` = "Default is no timeout"). Connect ke IP
+        // non-responsif = SYN retry OS bisa hang bermenit-menit; body read tak ada
+        // batas. Akibat offline→online: worker thread sync_remote blok sangat lama.
+        // Catatan: `connect_timeout` TIDAK efektif di blocking (butuh tokio runtime),
+        // jadi satusatunya batas andal = `.timeout()` total request.
+        let http = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))  // total per-request = deteksi offline cepat
+            .build()
+            .expect("build sync http client");
+        Self { base, token, http }
     }
 
     fn endpoint(&self, path: &str) -> String {

@@ -1027,7 +1027,17 @@
   document.getElementById('setSetupBtn')?.addEventListener('click',setupSet);
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status(); clock(); setInterval(clock,10000);
-  setInterval(autoSync,60000);   // auto-sinkron (produk/member/antrian) tiap 60s saat online
+  // Auto-sinkron adaptif via recursive setTimeout (bukan setInterval) supaya
+  // interval bisa berubah mengikuti status: online → 60s, offline → 10s.
+  // Guard `syncing` di dalam autoSync cegah overlap saat request masih jalan.
+  autoSync();                              // langsung sekali di awal
+  (function loop(){
+    setTimeout(async ()=>{ await autoSync(); loop(); }, offline?10000:60000);
+  })();
+  // Trigger INSTAN saat browser melaporkan jaringan pulih/putus — tanpa ini,
+  // app menunggu interval 60s berikutnya (gap s/d menit) begitu koneksi kembali.
+  window.addEventListener('online', ()=>autoSync());
+  window.addEventListener('offline', ()=>{ offline=true; status(); });
   initKasir();
   cekUpdate();
   refKasir();
