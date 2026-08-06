@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Verification harness ZPos Kasir — deterministic Playwright Chromium against mocked __TAURI__ invoke + node:sqlite fixture assertions.",
+  "description": "Verification harness ZPos Kasir — deterministic Playwright Chromium against mocked __TAURI__ + SQLite fixture",
   "scripts": {
-    "verify": "node run.mjs"
+    "test": "node run.mjs",
+    "shots": "node run.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.45.0"
+    "@playwright/test": "^1.48.0"
   }
 }
