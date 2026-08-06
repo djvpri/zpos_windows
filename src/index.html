@@ -520,10 +520,18 @@
     const k=e.key;
     if(k==='Enter'){
       if(scanBuf.length>=3){
-        const code=scanBuf; scanBuf='';
-        const p=PRODUK.find(p=>p.b && p.b===code);
-        if(p){ add(p.id); }
-        else toast('Barcode tidak dikenal: '+code);
+        const raw=scanBuf; scanBuf='';
+        // Scanner USB bisa kirim data bercampur (GS1 `(90)`, data internal,
+        // barcode diulang 2x, noise). Cari produk yg barcode aslinya muncul
+        // SEBAGAI SUBSTRING buffer — pilih yg terpanjang sbg match paling tegas.
+        let best=null;
+        for(const x of PRODUK){
+          if(x.b && x.b.length>=6 && raw.includes(x.b)){
+            if(!best || x.b.length>best.b.length) best=x;
+          }
+        }
+        if(best){ add(best.id); }
+        else toast('Barcode tidak dikenal: '+raw);
       }
       if(e.preventDefault) e.preventDefault();
       return;
