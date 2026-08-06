@@ -851,7 +851,7 @@
       const path=await tinv('unduh_update',{url});
       logErr('UPDT','unduh v'+latest+' siap');
       toast('Update '+latest+' terunduh — aplikasi akan restart');
-      await tinv('terapkan_update',{target_path:path, versi_baru:latest});
+      await tinv('terapkan_update',{targetPath:path, versiBaru:latest});
       setTimeout(()=>tinv('keluar').catch(()=>{}), 400);
     }catch(e){
       showErr('Update gagal: '+e);
