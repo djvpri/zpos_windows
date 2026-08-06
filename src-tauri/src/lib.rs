@@ -346,19 +346,44 @@ fn buka_url(url: String) -> Result<(), String> {
 // gagal swap: app lama tetap utuh, update.bin dibiarkan utk retry manual.
 
 // Unduh exe baru ke app_data mengikuti pola atomic (nama temp → rename).
+// Retry 3x dgn client baru (koneksi segar). "error decoding response body"
+// dari reqwest sering muncul saat pooled-connection stale / response besar
+// terinterupsi; connect ulang menyelesaikannya. Timeout 120s biar tak hang.
 #[tauri::command]
 fn unduh_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
     let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     if std::fs::create_dir_all(&dir).is_err() { return Err("gagal akses app_data".into()); }
     let tmp = dir.join("zpos-kasir.new.tmp");
     let target = dir.join("zpos-kasir.new.exe");
-    let resp = reqwest::blocking::get(&url).map_err(|e| format!("unduh gagal: {e}"))?;
-    if !resp.status().is_success() { return Err(format!("server balas HTTP {}", resp.status())); }
-    let bytes = resp.bytes().map_err(|e| format!("baca response gagal: {e}"))?;
-    if bytes.len() < 100_000 { return Err("file unduhan mencurigakan kecil".into()); }
-    std::fs::write(&tmp, &bytes).map_err(|e| format!("tulis file gagal: {e}"))?;
-    if std::fs::rename(&tmp, &target).is_err() && !target.exists() { return Err("atur ulang nama gagal".into()); }
-    Ok(target.to_string_lossy().into())
+    let mut last_err = String::from("tidak ada percobaan");
+    for attempt in 0..3 {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build().map_err(|e| format!("build client gagal: {e}"))?;
+        match client.get(&url).send() {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    last_err = format!("server balas HTTP {}", resp.status());
+                } else {
+                    match resp.bytes() {
+                        Ok(bytes) if bytes.len() >= 100_000 => {
+                            if std::fs::write(&tmp, &bytes).is_err() { last_err = "tulis file gagal".into(); }
+                            else if std::fs::rename(&tmp, &target).is_err() && !target.exists() {
+                                last_err = "atur ulang nama gagal".into();
+                            } else { return Ok(target.to_string_lossy().into()); }
+                        }
+                        Ok(bytes) => last_err = format!("file unduhan mencurigakan kecil ({})", bytes.len()),
+                        Err(e) => last_err = format!("baca response gagal: {e}"),
+                    }
+                }
+            }
+            Err(e) => last_err = format!("unduh gagal: {e}"),
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+        }
+    }
+    Err(format!("unduh_gagal_3x: {last_err}"))
 }
 
 // Spawn cmd detach (2s delay biar app sempat exit) utk hapus exe lama → pindah
@@ -392,8 +417,8 @@ start \"\" {me}",
         me = format!("\"{}\"", me_s), new = format!("\"{}\"", new_s)
     );
     let _ = submit_log(&app, &format!("menerapkan update ke {}", versi_baru));
-    // spawn tanpa .wait() → detach. Setelah app.exit(), cmd menunggu 2 detik,
-    // hapus binary lama, pindah exe baru, relaunch di lokasi asal.
+    // spawn tanpa .wait() → detach. Setelah app.exit(), cmd tunggu exe terlepas
+    // (retry del) lalu pindah exe baru, relaunch di lokasi asal.
     std::process::Command::new("cmd.exe")
         .args(["/C", script.as_str()])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW — tanpa console
