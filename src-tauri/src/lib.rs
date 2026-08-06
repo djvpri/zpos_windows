@@ -379,8 +379,16 @@ fn terapkan_update(app: tauri::AppHandle, payload: Value) -> Result<(), String> 
     let me = std::env::current_exe().map_err(|e| format!("path exe gagal: {e}"))?;
     let me_s = me.to_string_lossy().replace('/', "\\");
     let new_s = target_path.replace('/', "\\");
+    // Loop retry: exe lama TAK bisa dihapus selama app masih berjalan (terkunci
+    // Windows). `timeout 2` kaku tak cukup — teardown Tauri bisa lebih lama.
+    // Tunggu sampai `del` berhasil (app benar2 keluar) baru move + relaunch.
     let script = format!(
-        "timeout /t 2 /nobreak >nul & del /f /q {me} & move /y {new} {me} & start \"\" {me}",
+        "timeout /t 1 /nobreak >nul
+:retry
+del /f /q {me} 2>nul
+if exist {me} ( timeout /t 1 /nobreak >nul & goto retry )
+move /y {new} {me} >nul
+start \"\" {me}",
         me = format!("\"{}\"", me_s), new = format!("\"{}\"", new_s)
     );
     let _ = submit_log(&app, &format!("menerapkan update ke {}", versi_baru));
