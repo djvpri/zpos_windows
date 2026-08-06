@@ -188,7 +188,13 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        resp.json().map_err(|e| format!("json: {e}"))
+        // Server balas `[]` untuk toko tanpa kategori member, TAPI toko lain bisa
+        // dapat body 0-byte (200, chunked, kosong) → `resp.json::<Vec>` lempar EOF
+        // "error decoding response body". Body kosong = toko belum punya kategori
+        // member → samakan dgn daftar kosong biar dropdown tetap bersih.
+        let body = resp.text().map_err(|e| format!("body: {e}"))?;
+        if body.trim().is_empty() { return Ok(Vec::new()); }
+        serde_json::from_str(&body).map_err(|e| format!("json: {e}"))
     }
 
     // Simpan daftar user ke users_lokal (ganti isi penuh, tanpa ganti baris).
