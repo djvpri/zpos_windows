@@ -229,9 +229,10 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url.clone(), token);
 
-    let r = (|| -> Result<(usize, usize, usize, usize, usize), String> {
+    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize), String> {
         let n_kat = c.pull_kategori(conn)?;
         let n_produk = c.pull_produk(conn)?;
+        let n_km = c.pull_kategori_member(conn)?;
         let n_member = c.pull_member(conn)?;
         // pull_users best-effort: cuma admin boleh (403 utk kasir). Kasir TETAP
         // bisa sinkron katalog/member; gagal tarik user TIDAK merusak sync.
@@ -243,14 +244,14 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
             }
         };
         let n_push = c.push_antrian(conn)?;
-        Ok((n_kat, n_produk, n_member, n_user, n_push))
+        Ok((n_kat, n_produk, n_km, n_member, n_user, n_push))
     })();
     match &r {
-        Ok((k, p, m, u, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} member={m} user={u} push={s}")),
+        Ok((k, p, km, m, u, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} katmember={km} member={m} user={u} push={s}")),
         Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
     }
-    let (n_kat, n_produk, n_member, n_user, n_push) = r?;
-    Ok(format!("kategori {n_kat}, produk {n_produk}, member {n_member}, user {n_user}, push {n_push}"))
+    let (n_kat, n_produk, n_km, n_member, n_user, n_push) = r?;
+    Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, push {n_push}"))
 }
 
 // Setup pertama (owner/admin tenant): login email+password sekali → server
@@ -294,19 +295,18 @@ fn tambah_member(state: State<AppState>, app: tauri::AppHandle, base_url: String
 
 // Daftar kategori member toko (dropdown saat kasir daftarkan member).
 #[tauri::command]
-fn list_kategori_member(state: State<AppState>, app: tauri::AppHandle, base_url: String) -> Result<Vec<sync::RemoteKategoriMember>, String> {
-    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = &mut *guard;
-    let meta_tok: String = conn.query_row(
-        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
-    ).unwrap_or_default();
-    let c = sync::SyncClient::new(base_url, meta_tok);
-    let r = c.list_kategori_member();
-    match &r {
-        Ok(list) => submit_log(&app, &format!("kategori member list OK n={}", list.len())),
-        Err(e) => submit_log(&app, &format!("kategori member list GAGAL: {e}")),
-    }
-    r
+fn list_kategori_member(state: State<AppState>) -> Result<Vec<sync::RemoteKategoriMember>, String> {
+    // Baca dari cache sqlite lokal (diisi `pull_kategori_member` saat sync).
+    // Sebelumnya hit server live tiap dropdown → butuh online & lambat; kini
+    // offline-ready & cepat. Server truth tetap lewat pull tiap siklus sync.
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut st = conn.prepare(
+        "SELECT id,nama,diskon_persen FROM kategori_member ORDER BY urutan,nama",
+    ).map_err(|e| e.to_string())?;
+    let rows = st.query_map([], |r| Ok(sync::RemoteKategoriMember{
+        id: r.get(0)?, nama: r.get(1)?, diskon_persen: r.get(2)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
 
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.

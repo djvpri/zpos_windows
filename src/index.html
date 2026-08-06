@@ -593,7 +593,7 @@
     document.getElementById('amNama').value = '';
     document.getElementById('amTelp').value = '';
     document.getElementById('amKat').value = '';
-    muatKategoriMember();   // isi dropdown kategori dari server
+    muatKategoriMember();   // isi dropdown kategori dari cache sqlite lokal
     document.getElementById('mwin').classList.remove('show');
     document.getElementById('addMemberModal').classList.add('show');
     setTimeout(()=>document.getElementById('amNama').focus(),60);
@@ -601,9 +601,10 @@
   function muatKategoriMember(){
     const sel=document.getElementById('amKat'); if(!sel) return;
     sel.innerHTML = '<option value="">— Tanpa kategori —</option>';
-    if(offline || !zposIsTauri()) return;
-    const base=localStorage.getItem('zpos_base'); if(!base) return;
-    tinv('list_kategori_member',{baseUrl:base})
+    if(!zposIsTauri()) return;
+    // Baca dari sqlite lokal (cache `pull_kategori_member` saat sync) — offline-ready,
+    // tak butuh baseUrl server lagi. Kosong kalau belum sync / toko tanpa kategori.
+    tinv('list_kategori_member')
       .then(list=>{
         (list||[]).forEach(k=>{
           const o=document.createElement('option');
@@ -785,7 +786,7 @@
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
-    status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ();
+    status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); muatKategoriMember();
   }
   function renderOffQ(){
     const w=document.getElementById('offq'), n=document.getElementById('offqN'), s=document.getElementById('simOnline');

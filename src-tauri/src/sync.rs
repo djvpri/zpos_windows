@@ -205,20 +205,37 @@ impl SyncClient {
         Ok(list.len())
     }
 
-    // Daftar kategori member toko (kasir & admin boleh lihat). Dipakai dropdown
-    // saat kasir mendaftarkan member baru.
-    pub fn list_kategori_member(&self) -> Result<Vec<RemoteKategoriMember>, String> {
+    // Tarik daftar kategori member dari server → cache ke sqlite lokal (tabel
+    // `kategori_member`). Konsisten pola `store_users`: hapus-isi-penuh biar
+    // kategori yg dihapus admin di server ikut hilang di lokal. Server = truth.
+    // Sebelumnya kategori member HANYA di-fetch live (dropdown online) & tak pernah
+    // di-persist → LEFT JOIN `list_member` selalu null (nama kategori & diskon hilang).
+    pub fn pull_kategori_member(&self, conn: &mut Connection) -> Result<usize, String> {
         let resp = self.http.get(self.endpoint("/api/kategori-member"))
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        // Server balas `[]` untuk toko tanpa kategori member, TAPI toko lain bisa
-        // dapat body 0-byte (200, chunked, kosong) → `resp.json::<Vec>` lempar EOF
-        // "error decoding response body". Body kosong = toko belum punya kategori
-        // member → samakan dgn daftar kosong biar dropdown tetap bersih.
+        // Body kosong (200, chunked 0-byte) = toko belum punya kategori → samakan kosong.
         let body = resp.text().map_err(|e| format!("body: {e}"))?;
-        if body.trim().is_empty() { return Ok(Vec::new()); }
-        serde_json::from_str(&body).map_err(|e| format!("json: {e}"))
+        let list: Vec<RemoteKategoriMember> = if body.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&body).map_err(|e| format!("json: {e}"))?
+        };
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM kategori_member", []).map_err(|e| e.to_string())?;
+        {
+            let mut st = tx.prepare_cached(
+                "INSERT INTO kategori_member (id,nama,diskon_persen,urutan)
+                 VALUES (?1,?2,?3,0)",
+            ).map_err(|e| e.to_string())?;
+            for km in &list {
+                st.execute((km.id, &km.nama, km.diskon_persen)).map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(list.len())
     }
 
     // Simpan daftar user ke users_lokal (ganti isi penuh, tanpa ganti baris).
