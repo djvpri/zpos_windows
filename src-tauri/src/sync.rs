@@ -33,11 +33,25 @@ pub struct RemoteMember {
     pub kategori_member_id: Option<i64>,
 }
 
+// Server kirim diskon_persen sebagai string ("-7", bisa negatif = markup),
+// sedangkan tipe lokal f64 (SQLite REAL). Terima string ATAU angka biar
+// deserialize tak gagal → dropdown kategori member tetap terisi.
+fn de_f64_str<'de, D: serde::Deserializer<'de>>(de: D) -> Result<f64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Num { F(f64), S(String) }
+    match Num::deserialize(de) {
+        Ok(Num::F(f)) => Ok(f),
+        Ok(Num::S(s)) => s.trim().parse().map_err(serde::de::Error::custom),
+        Err(e) => Err(e),
+    }
+}
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct RemoteKategoriMember {
     pub id: i64,
     pub nama: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_str")]
     pub diskon_persen: f64,
 }
 
