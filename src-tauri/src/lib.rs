@@ -396,9 +396,14 @@ fn unduh_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
 #[tauri::command]
 fn terapkan_update(app: tauri::AppHandle, payload: Value) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
-    let p = payload.as_object().ok_or("payload update bukan object")?;
+    let p = payload.as_object().ok_or_else(|| format!(
+        "Payload update salah (bukan object). Ini berarti app ini versi LAMA. Unduh manual exe dari halaman Release GitHub dan ganti file exe-nya. Versi sekarang: {}",
+        env!("CARGO_PKG_VERSION")))?;
     let target_path = p.get("targetPath").or_else(|| p.get("target_path"))
-        .and_then(|v| v.as_str()).ok_or("missing required key targetPath")?;
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!(
+            "Miss key targetPath. App ini versi LAMA (self-update dimulai v0.1.16). Unduh exe manual dari halaman Release GitHub, ganti file exe-nya, jalankan lagi. Versi sekarang: {}",
+            env!("CARGO_PKG_VERSION")))?;
     let versi_baru = p.get("versiBaru").or_else(|| p.get("versi_baru"))
         .and_then(|v| v.as_str()).ok_or("missing required key versiBaru")?;
     let me = std::env::current_exe().map_err(|e| format!("path exe gagal: {e}"))?;
@@ -473,6 +478,27 @@ fn baca_log(app: tauri::AppHandle, tail: usize) -> Result<String, String> {
     Ok(lines.iter().rev().take(n).rev().cloned().collect::<Vec<_>>().join("\n"))
 }
 
+// Export zpos-errors.log ke file .txt di folder Downloads user. Kirim kembali
+// path file yg dibuat (buat tampil/toast di frontend), atau Err kalau log kosong.
+#[tauri::command]
+fn export_log(app: tauri::AppHandle) -> Result<String, String> {
+    let src = log_path(&app);
+    let content = if src.exists() {
+        std::fs::read_to_string(&src).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if content.trim().is_empty() {
+        return Err("Log error masih kosong (belum ada aktivitas).".into());
+    }
+    let dir = app.path().download_dir().map_err(|e| format!("gagal dapat folder Downloads: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("gagal buat folder: {e}"))?;
+    let fname = format!("zpos-errors-{}.txt", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    let dst = dir.join(fname);
+    std::fs::write(&dst, &content).map_err(|e| format!("gagal tulis file: {e}"))?;
+    Ok(dst.to_string_lossy().into_owned())
+}
+
 // Timestamp readable lokal. chrono fitur `clock` (default) dipakai — bukan
 // SystemTime/epoch, supaya zpos-errors.log gampang diurut & dibaca.
 fn chrono_now() -> String {
@@ -528,7 +554,7 @@ fn run() {
             versi_app,
             buka_url,
             unduh_update, terapkan_update, keluar,
-            tulis_log, baca_log
+            tulis_log, baca_log, export_log
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
