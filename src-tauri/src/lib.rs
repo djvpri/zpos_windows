@@ -363,9 +363,19 @@ fn unduh_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
 
 // Spawn cmd detach (2s delay biar app sempat exit) utk hapus exe lama → pindah
 // exe baru → relaunch di tempat lama. Balik OK → frontend langsung keluar app.
+// Arg diterima sbg Value & dibaca dua bentuk (targetPath / target_path,
+// versiBaru / versi_baru) biar kompatibel caller lama (snake_case) & baru
+// (camelCase) — Tauri 2 expose param snake_case sbg camelCase, exe tua masih
+// kirim snake_case di invoke. ponytail: jika semua caller sudah camelCase,
+// pindah ke param terketik.
 #[tauri::command]
-fn terapkan_update(app: tauri::AppHandle, target_path: String, versi_baru: String) -> Result<(), String> {
+fn terapkan_update(app: tauri::AppHandle, payload: Value) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
+    let p = payload.as_object().ok_or("payload update bukan object")?;
+    let target_path = p.get("targetPath").or_else(|| p.get("target_path"))
+        .and_then(|v| v.as_str()).ok_or("missing required key targetPath")?;
+    let versi_baru = p.get("versiBaru").or_else(|| p.get("versi_baru"))
+        .and_then(|v| v.as_str()).ok_or("missing required key versiBaru")?;
     let me = std::env::current_exe().map_err(|e| format!("path exe gagal: {e}"))?;
     let me_s = me.to_string_lossy().replace('/', "\\");
     let new_s = target_path.replace('/', "\\");
