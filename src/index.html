@@ -379,7 +379,10 @@
     <div class="big"><i class="bi bi-cart-check" style="font-size:40px;color:#167430"></i></div>
     <h3>Transaksi selesai!</h3>
     <p id="ovTxt">Terjual offline, masuk antrian.</p>
-    <button onclick="closeOv()">OK</button>
+    <div style="display:flex;gap:8px;justify-content:center;margin-top:14px">
+      <button class="pay small hidden" id="printBtn" style="background:#4f7cff;border:none" onclick="cetakNota()"><i class="bi bi-printer"></i> Cetak Nota</button>
+      <button class="pay small" style="background:#eef1f6;color:#233;border:none" onclick="closeOv()">OK</button>
+    </div>
   </div>
 </div>
 
@@ -414,6 +417,7 @@
   let member = null;         // member aktif (obj member)
   let hargaMap = {};         // {produkId: hargaEfektif} utk member aktif
   let _tpTotal = 0;          // total transaksi utk modal pembayaran tunai
+  let notaTerakhir = null;   // data transaksi terakhir utk cetak nota (struk)
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, total}
@@ -830,11 +834,63 @@
       offQtn++;
     }
     renderOffQ();
+    // Simpan data transaksi utk cetak nota (di-baca tombol "Cetak Nota" di overlay).
+    // Catatan: TIDAK menyimpan data sensitif — cuma struk (item, harga, total).
+    notaTerakhir = { items, subtotal, diskon, total, bayar, kembali,
+                     noTransaksi, metode, kasir:kasirAktif.nama,
+                     waktu:new Date().toLocaleString('id-ID') };
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
+    document.getElementById('printBtn').classList.remove('hidden');
     clearCart();
   }
-  function closeOv(){ document.getElementById('ov').classList.remove('show'); }
+  // ===== Cetak nota (struk) =====
+  // Buka window/kiri berisi HTML nota → print() → dialog printer Windows (WebView2).
+  // Data dari `notaTerakhir` (disimpan di prosesBayar sebelum keranjang dikosongkan).
+  // `ponytail:` cetak diam-diam ke printer default (tanpa dialog) butuh backend raw
+  // print (mis. tauri-plugin-printer / esc-pos serial) — TODO saat printer termal dipakai.
+  function notaHtml(){
+    const n=notaTerakhir; if(!n) return '';
+    const toId=x=>'Rp'+(Number(x||0)).toLocaleString('id-ID');
+    const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows=n.items.map(i=>{
+      const nm=esc(i.nama_produk)+(i.qty>1?` <span style="color:#777">x${i.qty}</span>`:'');
+      return `<div style="display:flex;justify-content:space-between;gap:6px"><span>${nm}</span><span>${toId(i.subtotal)}</span></div>`;
+    }).join('');
+    return `<div style="font-family:'Consolas','Courier New',monospace;font-size:12px;width:288px;margin:0 auto;color:#111">
+      <div style="text-align:center;font-weight:bold;font-size:14px">ZPOS KASIR</div>
+      <div style="text-align:center;color:#555;font-size:10px;margin-bottom:6px">NOTA / STRUK BELANJA</div>
+      <div style="border-top:1px dashed #000;margin:4px 0"></div>
+      <div>No : ${esc(n.noTransaksi)}</div>
+      <div>Tgl: ${esc(n.waktu)}</div>
+      <div>Ksr: ${esc(n.kasir)}</div>
+      <div>Pay: ${esc(n.metode)}</div>
+      <div style="border-top:1px dashed #000;margin:4px 0"></div>
+      ${rows}
+      <div style="border-top:1px dashed #000;margin:4px 0"></div>
+      <div style="display:flex;justify-content:space-between"><span>Subtotal</span><span>${toId(n.subtotal)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span>Diskon</span><span>-${toId(n.diskon)}</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:14px"><span>TOTAL</span><span>${toId(n.total)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span>Bayar</span><span>${toId(n.bayar)}</span></div>
+      <div style="display:flex;justify-content:space-between"><span>Kembalian</span><span>${toId(n.kembali)}</span></div>
+      <div style="border-top:1px dashed #000;margin:6px 0"></div>
+      <div style="text-align:center;margin-top:6px"><strong>*** TERIMA KASIH ***</strong></div>
+    </div>`;
+  }
+  function cetakNota(){
+    if(!notaTerakhir){ toast('Belum ada transaksi utk dicetak.'); return; }
+    const html='<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Nota '+notaTerakhir.noTransaksi+'</title>'+
+      '<style>body{margin:0}</style></head><body>'+
+      '<div id="cet" style="text-align:center;padding:10px;background:#4f7cff;color:#fff;font-family:sans-serif;font-weight:bold;cursor:pointer" onclick="window.print()">CETAK / CEK CETAK</div>'+
+      notaHtml()+'</body></html>';
+    const w=window.open('','_blank','width=380,height=640');
+    if(w){
+      w.document.write(html); w.document.close(); w.focus(); w.onload=function(){ w.print(); };
+    } else {
+      toast('Popup diblokir — izinkan popup utk nota.');
+    }
+  }
+  function closeOv(){ document.getElementById('ov').classList.remove('show'); document.getElementById('printBtn').classList.add('hidden'); }
   function toast(t){ const e=document.getElementById('toast'); e.textContent=t; e.classList.add('show'); setTimeout(()=>e.classList.remove('show'),1800); }
   // tampilkan error sinkron secara persist + log ke console (devtools) biar ketahuan akar masalah.
   function showErr(t){
