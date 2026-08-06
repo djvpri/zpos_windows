@@ -162,6 +162,16 @@
   .ovcard p { font-size:13px; color:#5a6577; line-height:1.5; }
   .ovcard .big { font-size:44px; margin-bottom:8px; }
   .ovcard button { margin-top:14px; width:100%; padding:11px; border:none; border-radius:10px; background:#22c55e; color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
+  /* Modal pembayaran tunai: total, input uang, tombol nominal cepat, kembalian */
+  .tp .big { font-size:30px; text-align:center; margin-bottom:12px; color:#1e2f4d; }
+  .tp input { padding:10px 12px; border:1.5px solid #e2e6ee; border-radius:10px; font-size:20px; font-weight:700; text-align:center; outline:none; width:100%; box-sizing:border-box; }
+  .tp input:focus { border-color:#4f7cff; }
+  .tp .nomgrid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:6px; }
+  .tp .nomgrid button { padding:12px 6px; border:1.5px solid #d6dce5; border-radius:10px; background:#f5f7fb; color:#1e2f4d; font-size:14px; font-weight:700; cursor:pointer; transition:.12s; }
+  .tp .nomgrid button:hover { border-color:#4f7cff; color:#4f7cff; background:#fff; }
+  .tp .kemb { display:flex; justify-content:space-between; align-items:baseline; padding:8px 0 2px; font-size:13px; color:#5a6577; }
+  .tp .kemb b { font-size:24px; color:#1e7d33; }
+  .tp .kemb.minus b { color:#c62828; }
   /* toast */
   .toast { position:fixed; bottom:24px; left:50%; translate:-50% 0; background:#1e2f4d; color:#fff; padding:11px 18px; border-radius:10px; font-size:13px; box-shadow:0 8px 30px rgba(0,0,0,.25); opacity:0; transition:.3s; pointer-events:none; }
   .toast.show { opacity:1; }
@@ -343,6 +353,26 @@
   </div>
 </div>
 
+<!-- Modal pembayaran tunai: total, input uang diterima, tombol nominal cepat, kembalian -->
+<div class="modal tp" id="tpModal">
+  <div class="mc" style="max-width:340px">
+    <div class="mch"><span><i class="bi bi-cash-coin"></i> Pembayaran Tunai</span><span class="x" onclick="tutupTunai()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div class="kemb" style="justify-content:space-between;padding:0 0 4px"><span>Total</span><b id="tpTotal" style="font-size:22px;color:#1e2f4d">Rp0</b></div>
+      <div class="fld" style="margin-bottom:6px"><label>Uang diterima</label><input id="tpUang" inputmode="numeric" placeholder="0" oninput="this.value=this.value.replace(/\\D/g,'');hitungKemb()" onkeydown="if(event.key==='Enter')konfirmTunai()" /></div>
+      <div class="nomgrid">
+        <button onclick="setTunai(20000)">Rp20.000</button>
+        <button onclick="setTunai(50000)">Rp50.000</button>
+        <button onclick="setTunai(100000)">Rp100.000</button>
+        <button onclick="setTunai('pas')">Uang Pas</button>
+      </div>
+      <div class="kemb" id="tpKembWrap"><span>Kembalian</span><b id="tpKemb">Rp0</b></div>
+      <p id="tpMsg" style="font-size:12px;color:#c62828;margin:2px 0 8px;min-height:14px"></p>
+      <button class="sbtn" id="tpBtn" onclick="konfirmTunai()"><i class="bi bi-check-lg"></i> Konfirmasi Bayar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Overlay transaksi sukses -->
 <div class="ov" id="ov">
   <div class="ovcard">
@@ -383,6 +413,7 @@
   let metode = 'Tunai';
   let member = null;         // member aktif (obj member)
   let hargaMap = {};         // {produkId: hargaEfektif} utk member aktif
+  let _tpTotal = 0;          // total transaksi utk modal pembayaran tunai
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, total}
@@ -583,7 +614,10 @@
   function renderMemberList(){
     document.getElementById('mList').innerHTML = MEMBERS.map(m=>{
       const d=(m.d||0);
-      const tag = d<0 ? `<span class="tag hitam">markup ${-d}%</span>` : d>0 ? `<span class="tag murah">diskon ${d}%</span>` : `<span class="tag murah">harga tetap</span>`;
+      // Chip tampil nama kategori member (server-authoritative), bukan label
+      // harga tetap/markup hardcode. Warna tetap by arah diskon: markup→merah,
+      // diskon→hijau. Member tanpa kategori → 'harga tetap'.
+      const tag = `<span class="tag ${d<0?'hitam':'murah'}">${m.k||'harga tetap'}</span>`;
       return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
     }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
   }
@@ -731,6 +765,47 @@
       if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
       if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
+    const subtotal=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
+    const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
+    const total=subtotal-diskon;
+    // Tunai & QRIS/Transfer → alur beda. Tunai: tanya uang diterima & hitung
+    // kembalian (modal). QRIS/Transfer: bayar = tepat total, tanpa kembalian.
+    if(metode==='Tunai'){
+      _tpTotal=total;
+      document.getElementById('tpTotal').textContent=fmt(total);
+      document.getElementById('tpUang').value='';
+      document.getElementById('tpMsg').textContent='';
+      hitungKemb();
+      document.getElementById('tpModal').classList.add('show');
+      setTimeout(()=>document.getElementById('tpUang').focus(),60);
+      return;
+    }
+    prosesBayar(total, total, 0);
+  }
+  function hitungKemb(){
+    const el=document.getElementById('tpMsg'); if(el) el.textContent='';
+    const uang=parseInt(document.getElementById('tpUang').value,10)||0;
+    const kemb=uang-_tpTotal;
+    const wrap=document.getElementById('tpKembWrap');
+    const k=document.getElementById('tpKemb');
+    k.textContent=fmt(kemb<0?-kemb:kemb);
+    wrap.classList.toggle('minus', kemb<0);
+  }
+  function setTunai(v){
+    const uang = v==='pas' ? _tpTotal : v;
+    document.getElementById('tpUang').value = String(uang>=0?uang:0);
+    hitungKemb();
+    document.getElementById('tpUang').focus();
+  }
+  function tutupTunai(){ document.getElementById('tpModal').classList.remove('show'); }
+  document.getElementById('tpModal')?.addEventListener('click',e=>{ if(e.target.id==='tpModal') tutupTunai(); });
+  function konfirmTunai(){
+    const uang=parseInt(document.getElementById('tpUang').value,10)||0;
+    if(uang < _tpTotal){ document.getElementById('tpMsg').textContent='Uang diterima kurang dari total.'; return; }
+    tutupTunai();
+    prosesBayar(_tpTotal, uang, uang-_tpTotal);
+  }
+  function prosesBayar(total, bayar, kembali){
     // Bangun payload penuh persis format server ZPos web (GET/POST /api/transaksi
     // terima { trx, items }). Disimpan utuh di antrian; push_antrian kirim apa adanya.
     const items = cart.map(c=>{
@@ -740,11 +815,10 @@
     }).filter(Boolean);
     const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
     const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
-    const total=subtotal-diskon;
     const noTransaksi='TRX-'+Date.now().toString().slice(-8); // format noTrx() di web
     const payload={
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
-            bayar:total, kembali:0, metode_bayar:metode, kasir:kasirAktif.nama,
+            bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
             created_at:new Date().toISOString() },
       items,
     };
