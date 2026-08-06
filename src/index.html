@@ -216,6 +216,7 @@
       <div class="searchrow">
         <div class="search"><i class="bi bi-search" style="position:absolute;left:12px;top:50%;translate:0 -50%;color:#9aa3b5"></i><input id="q" placeholder="Cari produk..." oninput="render()" /></div>
         <button class="scanbtn" id="scanBtn" title="Scan barcode dengan barcode scanner USB" onclick="toggleScan()"><i class="bi bi-upc-scan"></i><span id="scanBtnTxt">Scan</span></button>
+        <button class="scanbtn" id="lainBtn" title="Penjualan Lainnya — item/jasa harga bebas" onclick="bukaLain()"><i class="bi bi-plus-circle"></i><span>Lainnya</span></button>
       </div>
       <div class="toolrow">
         <div class="member">
@@ -353,7 +354,45 @@
   </div>
 </div>
 
-<!-- Modal pembayaran tunai: total, input uang diterima, tombol nominal cepat, kembalian -->
+<!-- Modal Penjualan Lainnya: item/jasa harga bebas (salin fitur ZPos web) -->
+<div class="modal" id="nlModal">
+  <div class="mc" style="max-width:400px">
+    <div class="mch"><span><i class="bi bi-plus-circle"></i> Penjualan Lainnya</span><span class="x" onclick="tutupLain()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <span style="font-size:11px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.4px">Preset Cepat</span>
+        <button onclick="kelolaPresetToggle()" style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;border:1px solid #e2e6ee;background:#fff;color:#5a6577;border-radius:8px;padding:4px 8px;cursor:pointer"><i class="bi bi-gear"></i> Kelola Preset</button>
+      </div>
+      <div id="presetWrap" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px"></div>
+
+      <div id="kelolaWrap" style="display:none;margin-bottom:14px">
+        <div id="presetList" style="display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;margin-bottom:8px"></div>
+        <div style="display:flex;gap:6px">
+          <input id="ppNama" placeholder="Nama preset..." style="flex:2;padding:7px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none" />
+          <input id="ppHarga" placeholder="Harga (0=bebas)" inputmode="numeric" style="flex:1;padding:7px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none" />
+          <button onclick="tambahPresetLain()" style="padding:0 12px;background:#4f7cff;color:#fff;border:none;border-radius:8px;cursor:pointer"><i class="bi bi-plus"></i></button>
+        </div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Tambah Manual</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+        <input id="nlNama" placeholder="Nama item / jasa..." onkeydown="if(event.key==='Enter')tambahLainManual()" style="padding:9px 11px;border:1.5px solid #e2e6ee;border-radius:9px;font-size:13px;outline:none" />
+        <div style="display:flex;gap:8px">
+          <input id="nlHarga" placeholder="Harga (Rp)" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" style="flex:1;padding:9px 11px;border:1.5px solid #e2e6ee;border-radius:9px;font-size:13px;outline:none" />
+          <input id="nlQty" value="1" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" style="width:60px;padding:9px 11px;border:1.5px solid #e2e6ee;border-radius:9px;font-size:13px;outline:none;text-align:center" />
+          <button onclick="tambahLainManual()" style="padding:0 16px;background:#111;color:#fff;border:none;border-radius:9px;cursor:pointer;font-size:16px">+</button>
+        </div>
+      </div>
+
+      <div id="lainItems" style="display:flex;flex-direction:column;gap:6px;max-height:170px;overflow-y:auto;margin-bottom:10px"></div>
+      <div id="lainFoot" style="display:none">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px"><span id="lainCount"></span><b id="lainTotal">Rp0</b></div>
+        <button class="sbtn" onclick="masukKeranjangLain()"><i class="bi bi-cart-plus"></i> Masukkan ke Keranjang</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal tp" id="tpModal">
   <div class="mc" style="max-width:340px">
     <div class="mch"><span><i class="bi bi-cash-coin"></i> Pembayaran Tunai</span><span class="x" onclick="tutupTunai()"><i class="bi bi-x-lg"></i></span></div>
@@ -418,6 +457,18 @@
   let hargaMap = {};         // {produkId: hargaEfektif} utk member aktif
   let _tpTotal = 0;          // total transaksi utk modal pembayaran tunai
   let notaTerakhir = null;   // data transaksi terakhir utk cetak nota (struk)
+  // Penjualan Lainnya: item/jasa harga bebas (id virtual negatif). `lainItems`
+  // = daftar sementara di modal sebelum masuk keranjang.
+  let virtualProduk = {};    // {id(negatif): {nama,harga}}
+  let lainItems = [];        // [{id,nama,harga,qty}] sementara di modal
+  let kelolaLain = false;    // tampilkan panel kelola preset di modal
+  const LS_LAIN = 'zpos_preset_lain';
+  let PRESET_LAIN = [
+    { id:'p1', nama:'Jasa Servis', harga:0 },{ id:'p2', nama:'Fotokopi', harga:500 },
+    { id:'p3', nama:'Print Hitam', harga:1000 },{ id:'p4', nama:'Print Warna', harga:2500 },
+    { id:'p5', nama:'Laminating', harga:5000 },{ id:'p6', nama:'Jilid', harga:5000 },
+  ];
+  try { const _s = localStorage.getItem(LS_LAIN); if(_s) PRESET_LAIN = JSON.parse(_s); } catch(e){}
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, total}
@@ -584,7 +635,7 @@
   }, true);
   function renderCart(){
     document.getElementById('items').innerHTML=cart.map((c,x)=>{
-      const p=PRODUK.find(p=>p.id===c.id);
+      const p=pCart(c.id);
       if(!p) return '';
       const hm=hargaMember(c.id);
       const pakai = hm!=null && hm!==p.p;
@@ -594,7 +645,7 @@
         <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)" ${c.q>=p.s?'disabled style="opacity:.35;cursor:not-allowed"':''}>+</button></div>
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
-    const sub=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
+    const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=Math.round(sub*0.09/1000)*1000; // contoh diskon 9%
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
@@ -607,11 +658,99 @@
   }
   function chg(x,d){
     const c=cart[x];
-    const p=PRODUK.find(p=>p.id===c.id);
+    const p=pCart(c.id);
     if(d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
   }
   function clearCart(){ cart=[]; renderCart(); }
+
+  // ===== Penjualan Lainnya (item/jasa harga bebas) =====
+  // Ambil produk utk id keranjang: id asli → PRODUK, id virtual negatif → virtualProduk.
+  function pCart(id){
+    if(id>0) return PRODUK.find(p=>p.id===id)||null;
+    const v=virtualProduk[id]; if(!v) return null;
+    return { n:v.nama, p:v.harga, s:9999 }; // bentuk sama dgn PRODUK (n= nama, p= harga, s= stok)
+  }
+  function bukaLain(){ document.getElementById('nlModal').classList.add('show'); renderPresetLain(); renderLainItems(); }
+  function tutupLain(){ document.getElementById('nlModal').classList.remove('show'); }
+  function simpanPresetLain(){ try{ localStorage.setItem(LS_LAIN, JSON.stringify(PRESET_LAIN)); }catch(e){} }
+  function renderPresetLain(){
+    document.getElementById('presetWrap').innerHTML = PRESET_LAIN.map(p=>
+      `<button onclick="terapkanLain('${p.nama.replace(/\\'/g,"\\\\'")}',${p.harga})" style="border:1.5px solid #e2e6ee;background:#fff;color:#465;font-size:12px;border-radius:999px;padding:5px 11px;cursor:pointer;transition:all .12s">${p.nama}${p.harga>0?' • Rp '+p.harga.toLocaleString('id-ID'):''}</button>`
+    ).join('');
+    renderPresetList();
+  }
+  function renderPresetList(){
+    document.getElementById('presetList').innerHTML = PRESET_LAIN.map((p,i)=>{
+      const f=p.harga>0?'Rp '+p.harga.toLocaleString('id-ID'):'Harga bebas';
+      return `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0f2f7;border-radius:10px;padding:7px 10px">
+        <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.nama}</div><div style="font-size:10px;color:#98a2b3">${f}</div></div>
+        <button onclick="hapusPresetLain(${i})" style="padding:4px 8px;border:none;border-radius:6px;background:#fdecec;color:#d64545;cursor:pointer" title="Hapus"><i class="bi bi-trash"></i></button>
+      </div>`;
+    }).join('');
+  }
+  function kelolaPresetToggle(){ kelolaLain=!kelolaLain; document.getElementById('kelolaWrap').style.display=kelolaLain?'block':'none'; }
+  function tambahPresetLain(){
+    const n=(document.getElementById('ppNama').value||'').trim();
+    if(!n) return;
+    const h=parseInt(document.getElementById('ppHarga').value||'0',10)||0;
+    PRESET_LAIN.push({id:'p'+Date.now(), nama:n, harga:h});
+    simpanPresetLain(); document.getElementById('ppNama').value=''; document.getElementById('ppHarga').value='';
+    renderPresetLain();
+  }
+  function hapusPresetLain(i){ PRESET_LAIN.splice(i,1); simpanPresetLain(); renderPresetLain(); }
+  // Tambah item ke daftar sementara modal & langsung tampil di keranjang.
+  function terapkanLain(n,h){ tambahItemLain(n,Number(h)||0,1); renderLainItems(); }
+  function tambahLainManual(){
+    const n=(document.getElementById('nlNama').value||'').trim();
+    if(!n){ document.getElementById('nlNama').focus(); return; }
+    const h=parseInt(document.getElementById('nlHarga').value||'0',10)||0;
+    const q=parseInt(document.getElementById('nlQty').value||'1',10)||1;
+    tambahItemLain(n,h,q);
+    document.getElementById('nlNama').value=''; document.getElementById('nlHarga').value=''; document.getElementById('nlQty').value='1';
+    renderLainItems();
+  }
+  function tambahItemLain(n,h,q){
+    lainItems.push({ id:'l'+Date.now()+'_'+Math.random().toString(36).slice(2,6), nama:n, harga:h, qty:q });
+  }
+  function renderLainItems(){
+    const el=document.getElementById('lainItems');
+    el.innerHTML = lainItems.map((it,i)=>
+      `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0f2f7;border-radius:10px;padding:7px 10px">
+        <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.nama}</div>
+          <div style="display:flex;align-items:center;gap:5px;margin-top:2px">
+            <input value="${it.harga}" inputmode="numeric" oninput="lainChgHarga(${i},this.value)" style="width:76px;padding:2px 5px;border:1px solid #e2e6ee;border-radius:6px;font-size:11px;outline:none" />
+            <span style="font-size:10px;color:#98a2b3">x ${it.qty} = Rp ${(it.harga*it.qty).toLocaleString('id-ID')}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:3px">
+          <button onclick="lainChgQty(${i},-1)" style="width:22px;height:22px;border:1px solid #e2e6ee;background:#fff;border-radius:50%;cursor:pointer;font-size:12px;line-height:1">−</button>
+          <span style="width:16px;text-align:center;font-size:12px">${it.qty}</span>
+          <button onclick="lainChgQty(${i},1)" style="width:22px;height:22px;border:1px solid #e2e6ee;background:#fff;border-radius:50%;cursor:pointer;font-size:12px;line-height:1">+</button>
+          <button onclick="lainHapus(${i})" style="padding:3px 6px;border:none;background:none;color:#d64545;cursor:pointer"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>`
+    ).join('');
+    const total=lainItems.reduce((s,i)=>s+i.harga*i.qty,0);
+    document.getElementById('lainFoot').style.display = lainItems.length?'block':'none';
+    document.getElementById('lainCount').textContent = lainItems.length+' item';
+    document.getElementById('lainTotal').textContent = 'Rp '+total.toLocaleString('id-ID');
+  }
+  function lainHapus(i){ lainItems.splice(i,1); renderLainItems(); }
+  function lainChgQty(i,d){ if(lainItems[i]) lainItems[i].qty=Math.max(1, lainItems[i].qty+d); renderLainItems(); }
+  function lainChgHarga(i,v){ if(lainItems[i]) lainItems[i].harga=parseInt(v||'0',10)||0; renderLainItems(); }
+  function masukKeranjangLain(){
+    if(!lainItems.length){ toast('Belum ada item.'); return; }
+    lainItems.forEach(it=>{
+      const vid=-(Date.now()+Math.floor(Math.random()*10000));
+      virtualProduk[vid]={ nama:it.nama, harga:it.harga };
+      const f=cart.find(c=>c.id===vid);
+      if(f) f.q+=it.qty; else cart.push({id:vid, qty:it.qty});
+    });
+    lainItems=[]; renderLainItems();
+    tutupLain(); renderCart();
+    toast('Item lainnya masuk keranjang.');
+  }
 
   /* ===== Member ===== */
   function toggleMember(){ document.getElementById('mwin').classList.toggle('show'); }
@@ -718,9 +857,10 @@
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
     // renderCart: sub = Σ harga memakai harga member, disc 9%.
-    const sub=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
+    const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=Math.round(sub*0.09/1000)*1000;
-    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc });
+    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
+               vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     toast('Bon digantung atas nama '+member.n);
     clearCart();
   }
@@ -739,6 +879,7 @@
   function tarikBon(x){
     const b=bon[x];
     cart = b.items.map(it=>({id:it.id,q:it.q}));
+    if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
     bon.splice(x,1);
     document.getElementById('bonModal').classList.remove('show');
     toast('Bon ditarik');
@@ -764,12 +905,12 @@
     // Cegah jual barang stok 0 / melebihi stok (duplicate guard dari add/chg —
     // di sini jaga bila stok berubah via auto-sync setelah barang masuk keranjang).
     for(const c of cart){
-      const p=PRODUK.find(p=>p.id===c.id);
+      const p=pCart(c.id);
       if(!p) continue;
       if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
       if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
-    const subtotal=cart.reduce((s,c)=>{ const p=PRODUK.find(p=>p.id===c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
+    const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
     const total=subtotal-diskon;
     // Tunai & QRIS/Transfer → alur beda. Tunai: tanya uang diterima & hitung
@@ -813,9 +954,9 @@
     // Bangun payload penuh persis format server ZPos web (GET/POST /api/transaksi
     // terima { trx, items }). Disimpan utuh di antrian; push_antrian kirim apa adanya.
     const items = cart.map(c=>{
-      const p=PRODUK.find(p=>p.id===c.id); if(!p) return null;
+      const p=pCart(c.id); if(!p) return null;
       const h=hargaMember(c.id)||p.p;
-      return { produk_id:c.id, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
+      return { produk_id: c.id>0?c.id:null, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
     }).filter(Boolean);
     const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
     const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
