@@ -340,6 +340,69 @@ fn ambil_lisensi(state: State<AppState>) -> Result<Option<Lisensi>, String> {
     Ok(Some(l))
 }
 
+// ===== Shift kasir (per kasir lokal = id web user) =====
+
+// Buka shift utk kasir lokal. `base_url` + `user_id` datang dr frontend (kasir yg
+// login pin). Server meng-assign shift ke user tsb (token sync = admin, admin-only).
+#[tauri::command]
+fn buka_shift(state: State<AppState>, app: tauri::AppHandle, base_url: String, user_id: i64, modal: i64) -> Result<sync::ShiftAktif, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.buka_shift(conn, user_id, modal);
+    match &r {
+        Ok(s) => submit_log(&app, &format!("shift BUKA user={user_id} #{} modal={}", s.id, s.modal_awal)),
+        Err(e) => submit_log(&app, &format!("shift BUKA GAGAL user={user_id}: {e}")),
+    }
+    r
+}
+
+// Tutup shift → server hitung rekap totals utk modal rekap.
+#[tauri::command]
+fn tutup_shift(state: State<AppState>, app: tauri::AppHandle, base_url: String, user_id: i64, shift_id: i64) -> Result<Option<sync::ShiftRekap>, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.tutup_shift(conn, user_id, shift_id);
+    match &r {
+        Ok(_) => submit_log(&app, &format!("shift TUTUP user={user_id} #{}", shift_id)),
+        Err(e) => submit_log(&app, &format!("shift TUTUP GAGAL user={user_id}: {e}")),
+    }
+    r
+}
+
+// Shift aktif kasir dari cache lokal (`meta.shift_{user_id}`, diisi buka_shift/cek_shift).
+// Offline-safe; dipakai frontend utk banner + kirim shift_id di prosesBayar.
+#[tauri::command]
+fn ambil_shift(state: State<AppState>, user_id: i64, base_url: Option<String>) -> Result<Option<sync::ShiftAktif>, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    // Refresh dari server biar up-to-date dgn shift yg dibuka di web (admin).
+    // Best-effort: offline/gagal → pakai cache lokal.
+    if base_url.as_deref().map(|b| !b.trim().is_empty()).unwrap_or(false) {
+        let meta_tok: String = conn
+            .query_row("SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0))
+            .unwrap_or_default();
+        let c = sync::SyncClient::new(base_url.unwrap(), meta_tok);
+        if let Ok(s) = c.cek_shift(conn, user_id) {
+            return Ok(s);
+        }
+    }
+    let v: Option<String> = conn
+        .query_row("SELECT v FROM meta WHERE k=?1", [format!("shift_{user_id}")], |r| r.get(0))
+        .ok();
+    let Some(v) = v else { return Ok(None) };
+    let s: sync::ShiftAktif = serde_json::from_str(&v).map_err(|e| e.to_string())?;
+    Ok(Some(s))
+}
+
+
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
 fn mask(t: &str) -> String {
     if t.is_empty() { "KOSONG".into() }
@@ -714,7 +777,8 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, keluar,
             tulis_log, baca_log, export_log, nota_temp,
-            daftar_printer, cetak_escpos, ambil_lisensi
+            daftar_printer, cetak_escpos, ambil_lisensi,
+            buka_shift, tutup_shift, ambil_shift
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

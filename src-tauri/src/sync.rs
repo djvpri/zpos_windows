@@ -1,5 +1,5 @@
 use rusqlite::Connection;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +76,43 @@ pub struct RemoteUsersResp {
     #[serde(default)]
     pub toko_nama: Option<String>,
     pub users: Vec<RemoteUser>,
+}
+
+// Shift aktif utk kasir lokal (dipakai frontend utk banner + kirim shift_id).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ShiftAktif {
+    pub id: i64,
+    #[serde(default)]
+    pub kasir_nama: String,
+    #[serde(default)]
+    pub modal_awal: i64,
+    #[serde(default)]
+    pub buka_at: String,
+}
+
+// Rekap shift setelah tutup (dipakai frontend utk modal rekap).
+// Web `/api/shift/[id]` balik key snake_case (s.buka_at, jumlah_transaksi, dll).
+#[derive(Debug, Deserialize, Default)]
+pub struct ShiftRekap {
+    pub id: i64,
+    #[serde(default)]
+    pub kasir_nama: String,
+    #[serde(default)]
+    pub modal_awal: i64,
+    #[serde(default)]
+    pub buka_at: String,
+    #[serde(default)]
+    pub tutup_at: String,
+    #[serde(default)]
+    pub jumlah_transaksi: i64,
+    #[serde(default)]
+    pub total_penjualan: i64,
+    #[serde(default)]
+    pub total_tunai: i64,
+    #[serde(default)]
+    pub total_qris: i64,
+    #[serde(default)]
+    pub total_transfer: i64,
 }
 
 pub struct SyncClient {
@@ -309,6 +346,58 @@ impl SyncClient {
             [&v],
         ).map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    // Simpan JSON shift aktif per user ke meta (utk baca offline oleh `ambil_shift`).
+    fn store_shift(&self, conn: &mut Connection, user_id: i64, s: &ShiftAktif) -> Result<(), String> {
+        let v = serde_json::to_string(s).map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES (?1,?2)
+             ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            rusqlite::params![format!("shift_{user_id}"), &v],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // Buka shift utk kasir lokal (`user_id` = id web user). Token sync = admin,
+    // jd server meng-assign shift ke user tsb (admin-only di web POST /api/shift).
+    pub fn buka_shift(&self, conn: &mut Connection, user_id: i64, modal: i64) -> Result<ShiftAktif, String> {
+        let resp = self.http.post(self.endpoint("/api/shift"))
+            .header("Cookie", self.auth_cookie())
+            .json(&serde_json::json!({ "modal_awal": modal, "user_id": user_id }))
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let s: ShiftAktif = resp.json().map_err(|e| format!("json: {e}"))?;
+        self.store_shift(conn, user_id, &s)?;
+        Ok(s)
+    }
+
+    // Tutup shift → server hitung rekap totals (dipakai modal rekap di frontend).
+    // Hapus shift aktif lokal user tsb.
+    pub fn tutup_shift(&self, conn: &mut Connection, user_id: i64, shift_id: i64) -> Result<Option<ShiftRekap>, String> {
+        let resp = self.http.patch(self.endpoint(&format!("/api/shift/{shift_id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let r: ShiftRekap = resp.json().map_err(|e| format!("json: {e}"))?;
+        let _ = conn.execute("DELETE FROM meta WHERE k=?1", [format!("shift_{user_id}")]);
+        Ok(Some(r))
+    }
+
+    // Cek shift aktif kasir dari server → refresh cache lokal. Best-effort.
+    pub fn cek_shift(&self, conn: &mut Connection, user_id: i64) -> Result<Option<ShiftAktif>, String> {
+        let resp = self.http.get(self.endpoint(&format!("/api/shift/active?user_id={user_id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(Deserialize)]
+        struct Res { shift: Option<ShiftAktif> }
+        let r: Res = resp.json().map_err(|e| format!("json: {e}"))?;
+        match &r.shift {
+            Some(s) => self.store_shift(conn, user_id, s)?,
+            None => { let _ = conn.execute("DELETE FROM meta WHERE k=?1", [format!("shift_{user_id}")]); }
+        }
+        Ok(r.shift)
     }
 
     // Setup pertama utk owner/admin tenant: login email+password sekali → server

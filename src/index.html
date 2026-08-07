@@ -211,6 +211,7 @@
     <div class="right">
       <span id="clock">—</span>
       <div class="licBadge" id="licBadge" title="Lisensi toko"><i class="bi bi-shield-check"></i><span id="licTxt">—</span></div>
+      <div class="licBadge warn" id="shiftBadge" title="Shift kasir" onclick="bukaShiftUI()" style="display:none"><i class="bi bi-clock-history"></i><span id="shiftTxt">Shift</span></div>
       <div class="kasirpill" id="kasirPill" title="Kasir aktif — klik untuk ganti" onclick="bukaLogin()"><i class="bi bi-person-check"></i><span id="kasirNama"></span></div>
       <div class="ic" title="Kosongkan" onclick="clearCart()"><i class="bi bi-trash3"></i></div>
       <div class="ic" title="Pengaturan" onclick="openSet()"><i class="bi bi-gear"></i></div>
@@ -448,6 +449,7 @@
   let MEMBERS = [];
   let merchantHub = null; // {token, base_url, ...}
   let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
+  let SHIFT = null;        // {id, kasir_nama, modal_awal, buka_at, aktif} shift aktif kasir login
 
   const DEMO_PRODUK = [
     {id:1,n:'Nasi Goreng',e:'bi-egg-fried',p:15000,s:40},{id:2,n:'Nasi Ayam',e:'bi-fire',p:18000,s:25},{id:3,n:'Es Teh',e:'bi-cup-hot',p:5000,s:120},
@@ -987,6 +989,7 @@
     const payload={
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
             bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
+            shift_id: SHIFT?SHIFT.id:null,
             created_at:new Date().toISOString() },
       items,
     };
@@ -1144,6 +1147,7 @@
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
     status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); muatKategoriMember();
     refLisensi();
+    refShift();
   }
   // Muat info lisensi toko (cache dari sync) → badge header + gate transaksi baru.
   // Sumber: `/api/auth/me` (langganan_sampai), disimpan Rust ke meta 'lisensi'.
@@ -1169,6 +1173,73 @@
       else if(sisaHari<=14) txt.textContent=sisaHari+'hri';
       else txt.textContent='s/d '+tgl;
     }).catch(()=>{ badge.classList.add('hidden'); });
+  }
+  // ===== Shift kasir =====
+  // Shift sinkron ke web (per kasir lokal). `kasirAktif.id` = user id web.
+  // Buka → POST /api/shift (server attach ke user tsb, token sync admin). Transaksi
+  // selama shift kirim `trx.shift_id` → web attach ke shift. Tutup → PATCH rekap.
+  function refShift(){
+    const b=document.getElementById('shiftBadge');
+    if(!b) return;
+    if(!zposIsTauri() || !kasirAktif){ b.style.display='none'; SHIFT=null; return; }
+    tinv('ambil_shift',{userId:kasirAktif.id, baseUrl:localStorage.getItem('zpos_base')||''}).then(s=>{
+      SHIFT=s||null;
+      const badge=document.getElementById('shiftBadge'), txt=document.getElementById('shiftTxt');
+      badge.style.display='flex';
+      badge.className='licBadge '+(s?'ok':'warn');
+      badge.title=s?('Shift #'+s.id+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
+      txt.textContent=s?('Shift #'+s.id):'Buka Shift';
+    }).catch(()=>{ b.style.display='none'; SHIFT=null; });
+  }
+  function fmtTgl(v){ // "2026-08-07T...Z" / trunc
+    if(!v) return '-';
+    const d=new Date(String(v).replace(' ','T').replace(/Z$/,'')+'Z');
+    if(isNaN(d)) return String(v);
+    const p=x=>('0'+x).slice(-2);
+    return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+  function bukaShiftUI(){
+    if(!zposIsTauri()){ toast('Mode demo — shift perlu server.'); return; }
+    if(!kasirAktif){ toast('Login kasir dulu (klik nama kasir di kanan atas).'); return; }
+    if(SHIFT){
+      // Ada shift aktif → tawarkan tutup
+      if(!confirm('Tutup shift #'+SHIFT.id+' kasir '+kasirAktif.nama+'\n'+SHIFT.kasir_nama+' ?')) return;
+      const base=localStorage.getItem('zpos_base');
+      if(!base){ toast('Base URL belum di-set.'); return; }
+      tinv('tutup_shift',{baseUrl:base,userId:kasirAktif.id,shiftId:SHIFT.id}).then(rk=>{
+        SHIFT=null; refShift();
+        if(rk) tampilRekap(rk); else toast('Shift ditutup.');
+      }).catch(e=>toast('Gagal tutup: '+e));
+      return;
+    }
+    // Belum ada shift → input modal awal via prompt
+    const m=prompt('Modal awal kasir '+kasirAktif.nama+' (Rp):','0');
+    if(m===null) return;
+    const modal=Math.max(0,parseInt(m.replace(/\D/g,''))||0);
+    const base=localStorage.getItem('zpos_base');
+    if(!base){ toast('Base URL belum di-set.'); return; }
+    tinv('buka_shift',{baseUrl:base,userId:kasirAktif.id,modal}).then(s=>{
+      SHIFT=s; refShift(); toast('Shift #'+s.id+' dibuka. Modal '+fmt(s.modal_awal||0));
+    }).catch(e=>toast('Gagal buka shift: '+e));
+  }
+  function tampilRekap(r){
+    const rp=v=>'Rp '+(Number(v)||0).toLocaleString('id-ID');
+    const nl=s=>(s==null?'0':s);
+    const txt=[
+      '=== REKAP SHIFT #'+r.id+' ===',
+      'Kasir: '+nl(r.kasir_nama),
+      'Buka: '+fmtTgl(r.buka_at)+'  Tutup: '+fmtTgl(r.tutup_at),
+      'Transaksi: '+nl(r.jumlah_transaksi)+'x',
+      '----------------------------',
+      'Modal awal : '+rp(r.modal_awal),
+      'Penjualan  : '+rp(r.total_penjualan),
+      'Tunai      : '+rp(r.total_tunai),
+      'QRIS       : '+rp(r.total_qris),
+      'Transfer   : '+rp(r.total_transfer),
+      '----------------------------',
+      'Kas akhir  : '+rp((Number(r.modal_awal)||0)+(Number(r.total_tunai)||0)),
+    ].join('\n');
+    alert(txt);
   }
   function renderOffQ(){
     const w=document.getElementById('offq'), n=document.getElementById('offqN'), s=document.getElementById('simOnline');
@@ -1303,7 +1374,7 @@
           const nama=sel.options[sel.selectedIndex]?.textContent.replace(' (admin)','')||'';
           kasirAktif={id:uid, nama};
           localStorage.setItem('zpos_kasir',JSON.stringify(kasirAktif));
-          refKasir(); tutupLogin(); toast('Selamat datang, '+nama);
+          refKasir(); refShift(); tutupLogin(); toast('Selamat datang, '+nama);
         }
       })
       .catch(e=>{
