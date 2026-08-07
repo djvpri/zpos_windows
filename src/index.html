@@ -16,6 +16,12 @@
   .hdr .logo img { height:40px; width:auto; display:block; object-fit:contain; }
   /* Badge kasir aktif — nama user besar & kontras tinggi */
   .kasirpill { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:5px 12px; cursor:pointer; transition:.12s; }
+  .licBadge { display:flex; align-items:center; gap:6px; font-size:11px; font-weight:700; border-radius:999px; padding:4px 11px; cursor:pointer; transition:.12s; border:1px solid transparent; }
+  .licBadge.ok { background:rgba(34,197,94,.15); color:#7fe0a5; border-color:rgba(34,197,94,.35); }
+  .licBadge.warn { background:rgba(245,158,11,.18); color:#ffd27a; border-color:rgba(245,158,11,.4); }
+  .licBadge.bad { background:rgba(239,68,68,.2); color:#ff9b9b; border-color:rgba(239,68,68,.5); }
+  .licBadge.block { background:rgba(239,68,68,.28); color:#ffd; border-color:rgba(239,68,68,.6); animation:licPulse 1.2s infinite; }
+  @keyframes licPulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4);} 50%{box-shadow:0 0 0 6px rgba(239,68,68,0);} }
   .kasirpill:hover { background:rgba(255,255,255,.2); }
   .kasirpill .bi { color:#9ec5ff; font-size:15px; }
   .kasirpill #kasirNama { font-size:13px; font-weight:700; color:#fff; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -204,6 +210,7 @@
     <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
     <div class="right">
       <span id="clock">—</span>
+      <div class="licBadge" id="licBadge" title="Lisensi toko"><i class="bi bi-shield-check"></i><span id="licTxt">—</span></div>
       <div class="kasirpill" id="kasirPill" title="Kasir aktif — klik untuk ganti" onclick="bukaLogin()"><i class="bi bi-person-check"></i><span id="kasirNama"></span></div>
       <div class="ic" title="Kosongkan" onclick="clearCart()"><i class="bi bi-trash3"></i></div>
       <div class="ic" title="Pengaturan" onclick="openSet()"><i class="bi bi-gear"></i></div>
@@ -440,6 +447,7 @@
   let PRODUK = [];
   let MEMBERS = [];
   let merchantHub = null; // {token, base_url, ...}
+  let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
 
   const DEMO_PRODUK = [
     {id:1,n:'Nasi Goreng',e:'bi-egg-fried',p:15000,s:40},{id:2,n:'Nasi Ayam',e:'bi-fire',p:18000,s:25},{id:3,n:'Es Teh',e:'bi-cup-hot',p:5000,s:120},
@@ -961,6 +969,11 @@
     prosesBayar(_tpTotal, uang, uang-_tpTotal);
   }
   function prosesBayar(total, bayar, kembali){
+    // Blokir transaksi baru bila lisensi lewat > grace 7 hari (riwayat tetap jalan).
+    if(LISENSI&&LISENSI.blocked){
+      toast('Lisensi toko lebih dari 7 hari lewat. Perpanjang lewat admin/web, lalu sinkron.');
+      return;
+    }
     // Bangun payload penuh persis format server ZPos web (GET/POST /api/transaksi
     // terima { trx, items }). Disimpan utuh di antrian; push_antrian kirim apa adanya.
     const items = cart.map(c=>{
@@ -1130,6 +1143,32 @@
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
     status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); muatKategoriMember();
+    refLisensi();
+  }
+  // Muat info lisensi toko (cache dari sync) → badge header + gate transaksi baru.
+  // Sumber: `/api/auth/me` (langganan_sampai), disimpan Rust ke meta 'lisensi'.
+  // Kebijakan: TOKO LUNGAW. Aktif penuh; ≤14 hari warn; lewat ≤7 hari grace (jalan,
+  // banner merah); >7 hari lewat = blokir transaksi baru (riwayat/export tetap).
+  function refLisensi(){
+    const badge=document.getElementById('licBadge'), txt=document.getElementById('licTxt');
+    if(!zposIsTauri()){ badge.classList.add('hidden'); return; }
+    tinv('ambil_lisensi').then(l=>{
+      if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
+      let expiredAt=l.langganan_sampai?new Date(l.langganan_sampai.replace(' ','T').replace(/Z$/,'')+'Z').getTime():null;
+      if(!expiredAt||isNaN(expiredAt)){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
+      const sisaHari=Math.ceil((expiredAt-Date.now())/86400000);
+      const terlambat=-sisaHari;          // >0 = sudah lewat N hari
+      const blocked=terlambat>7;          // lewat grace 7 hari
+      LISENSI={sisa:sisaHari, terlambat, blocked};
+      badge.classList.remove('hidden');
+      const T=new Date(expiredAt), tgl=('0'+T.getDate()).slice(-2)+'/'+('0'+(T.getMonth()+1)).slice(-2)+'/'+T.getFullYear();
+      badge.className='licBadge '+(blocked?'block':sisaHari>14?'ok':sisaHari>0?'warn':'bad');
+      badge.title='Lisensi toko\nPlan: '+(l.plan||'-')+(l.aktif?' (aktif)':' (nonaktif)')+'\nBerlaku s/d '+tgl+(blocked?'\nLEBIH 7 HARI — transaksi diblokir. Hubungi admin.':'');
+      if(blocked) txt.textContent='Blokir';
+      else if(sisaHari<=0) txt.textContent='Lewat '+terlambat+'h';
+      else if(sisaHari<=14) txt.textContent=sisaHari+'hri';
+      else txt.textContent='s/d '+tgl;
+    }).catch(()=>{ badge.classList.add('hidden'); });
   }
   function renderOffQ(){
     const w=document.getElementById('offq'), n=document.getElementById('offqN'), s=document.getElementById('simOnline');

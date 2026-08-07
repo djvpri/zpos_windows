@@ -277,6 +277,40 @@ impl SyncClient {
         Ok(n)
     }
 
+    // Data lisensi toko dari `/api/auth/me` (status langganan, plan, expired).
+    // Sumber tanggal = kolom `toko.langganan_sampai` di DB ZPos web (guard.ts
+    // statusToko). Kasir simpan hasilnya di meta `lisensi` (JSON) biar bisa
+    // dibaca offline. Endpoint ini pakai getTokoFromRequest (cookie token) — siapa
+    // pun user toko yg valid boleh akses (kasir/admin). Token sync = admin.
+    pub fn pull_license(&self, conn: &mut Connection) -> Result<(), String> {
+        let resp = self.http.get(self.endpoint("/api/auth/me"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(Deserialize)]
+        struct Me {
+            #[serde(default)]
+            plan: String,
+            #[serde(default)]
+            aktif: bool,
+            #[serde(default)]
+            expired: bool,
+            #[serde(default)]
+            langganan_sampai: Option<String>,
+        }
+        let me: Me = resp.json().map_err(|e| format!("json: {e}"))?;
+        let v = serde_json::json!({
+            "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
+            "langganan_sampai": me.langganan_sampai,
+        }).to_string();
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES ('lisensi',?1)
+             ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            [&v],
+        ).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     // Setup pertama utk owner/admin tenant: login email+password sekali → server
     // validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
     // Ganti jalur manual (tempel JWT admin). Tak butuh auth cookie — server

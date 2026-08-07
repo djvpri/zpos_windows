@@ -243,6 +243,12 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
                 0
             }
         };
+        // pull_license juga best-effort: kalau `/api/auth/me` gagal (kasir role yg
+        // tokennya mungkin non-admin? no — me utk semua user valid), biarkan cache
+        // lisensi lama tetap. Gagal tarik lisensi TIDAK merusak sync.
+        if let Err(e) = c.pull_license(conn) {
+            submit_log(&app, &format!("sync pull_license SKIP: {e}"));
+        }
         let n_push = c.push_antrian(conn)?;
         Ok((n_kat, n_produk, n_km, n_member, n_user, n_push))
     })();
@@ -307,6 +313,31 @@ fn list_kategori_member(state: State<AppState>) -> Result<Vec<sync::RemoteKatego
         id: r.get(0)?, nama: r.get(1)?, diskon_persen: r.get(2)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
+}
+
+// Info lisensi toko yg di-cache saat sync (`meta.lisensi`, diisi pull_license).
+// Offline → baca cache lokal; frontend hitung sisa hari & tentukan blokir.
+#[derive(Serialize, Deserialize)]
+struct Lisensi {
+    #[serde(default)]
+    plan: String,
+    #[serde(default)]
+    aktif: bool,
+    #[serde(default)]
+    expired: bool,
+    #[serde(default)]
+    langganan_sampai: Option<String>,
+}
+
+#[tauri::command]
+fn ambil_lisensi(state: State<AppState>) -> Result<Option<Lisensi>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let v: Option<String> = conn
+        .query_row("SELECT v FROM meta WHERE k='lisensi'", [], |r| r.get(0))
+        .ok();
+    let Some(v) = v else { return Ok(None) };
+    let l: Lisensi = serde_json::from_str(&v).map_err(|e| e.to_string())?;
+    Ok(Some(l))
 }
 
 // Jangan paparkan token penuh ke log — cukup "ada" (len>0) + 4 huruf terakhir.
@@ -683,7 +714,7 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, keluar,
             tulis_log, baca_log, export_log, nota_temp,
-            daftar_printer, cetak_escpos
+            daftar_printer, cetak_escpos, ambil_lisensi
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
