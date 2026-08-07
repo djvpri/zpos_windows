@@ -27,7 +27,7 @@ tauri-plugin-single-instance = "2"
 # Cetak nota langsung ke printer thermal via Windows Print Spooler (winspool).
 # Target-specific: hanya di-load saat build Windows — Linux/macOS tak terpengaruh.
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Graphics_Printing", "Win32_System_Com"] }
+windows = { version = "0.58", features = ["Win32_Graphics_Printing", "Win32_Graphics_Gdi"] }
 
 [profile.release]
 opt-level = 2

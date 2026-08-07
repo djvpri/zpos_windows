@@ -507,31 +507,33 @@ fn export_log(app: tauri::AppHandle) -> Result<String, String> {
 #[cfg(windows)]
 #[tauri::command]
 fn daftar_printer() -> Result<Vec<String>, String> {
-    use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Graphics::Printing::{
-        EnumPrintersW, PRINTER_ENUM_LOCAL, PRINTER_INFO_1W,
-    };
-    use windows::Win32::Foundation::BOOL;
+    use windows::core::PWSTR;
+    use windows::Win32::Graphics::Printing::{EnumPrintersW, PRINTER_INFO_1W};
 
-    let flags = PRINTER_ENUM_LOCAL;
+    // flags = PRINTER_ENUM_LOCAL (0x2). EnumPrinters level 1 cukup utk nama printer.
+    const PRINTER_ENUM_LOCAL: u32 = 0x00000002;
     let mut needed: u32 = 0;
     let mut returned: u32 = 0;
     // pass 1: hitung ukuran buffer
-    unsafe {
-        EnumPrintersW(flags, None, 1, None, 0, &mut needed, &mut returned);
-    }
+    unsafe { EnumPrintersW(PRINTER_ENUM_LOCAL, None, 1, None, &mut needed, &mut returned) }
+        .map_err(|e| format!("EnumPrintersW (query) gagal: {e}"))?;
     if needed == 0 {
         return Ok(Vec::new()); // tak ada printer lokal
     }
     let mut buf = vec![0u8; needed as usize];
     let mut returned2: u32 = 0;
-    let ok: BOOL = unsafe {
-        EnumPrintersW(flags, None, 1, Some(buf.as_mut_ptr()), needed, &mut needed, &mut returned2)
-    };
-    if !ok.as_bool() {
-        return Err("EnumPrintersW gagal".into());
+    unsafe {
+        EnumPrintersW(
+            PRINTER_ENUM_LOCAL,
+            None,
+            1,
+            Some(&mut buf[..]),
+            &mut needed,
+            &mut returned2,
+        )
     }
-    // PRINTER_INFO_1W { flags:u32, pDescription, pName, pComment } — pName di offset saat stride.
+    .map_err(|e| format!("EnumPrintersW (isi) gagal: {e}"))?;
+    // PRINTER_INFO_1W { flags:u32, pDescription, pName, pComment }
     let stride = std::mem::size_of::<PRINTER_INFO_1W>();
     let n = returned2 as usize;
     let mut out = Vec::with_capacity(n);
@@ -559,10 +561,11 @@ fn daftar_printer() -> Result<Vec<String>, String> {
 #[cfg(windows)]
 #[tauri::command]
 fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> {
+    use std::os::raw::c_void;
     use windows::core::{w, PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{BOOL, HANDLE};
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Graphics::Printing::{
-        ClosePrinter, EndDocPrinterW, OpenPrinterW, StartDocPrinterW, WritePrinter, DOC_INFO_1W,
+        ClosePrinter, EndDocPrinter, OpenPrinterW, StartDocPrinterW, WritePrinter, DOC_INFO_1W,
     };
 
     if nama_printer.trim().is_empty() {
@@ -573,10 +576,12 @@ fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> 
     let pname = PCWSTR(name16.as_ptr());
 
     let mut hprinter: HANDLE = HANDLE::default();
-    let ok: BOOL = unsafe { OpenPrinterW(Some(pname), &mut hprinter, None) };
-    if !ok.as_bool() {
-        return Err(format!("Printer \"{nama_printer}\" tidak bisa dibuka. Pastikan driver RPP02N terpasang di Printers & scanners.").into());
-    }
+    unsafe { OpenPrinterW(pname, &mut hprinter, None) }
+        .map_err(|_| {
+            format!(
+                "Printer \"{nama_printer}\" tidak bisa dibuka. Pastikan driver RPP02N terpasang di Printers & scanners."
+            )
+        })?;
     // cegah leak & jangan pernah lupa close printer pada error
     let r = (|| -> Result<String, String> {
         let doc = DOC_INFO_1W {
@@ -584,21 +589,23 @@ fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> 
             pOutputFile: PWSTR::null(),
             pDatatype: PWSTR(w!("RAW").as_ptr() as *mut u16),
         };
-        let job: i32 = unsafe { StartDocPrinterW(hprinter, 1, &doc) };
+        let job: u32 = unsafe { StartDocPrinterW(hprinter, 1, &doc) };
         if job == 0 {
             return Err("StartDocPrinter gagal.".into());
         }
         let data = escpos.as_bytes();
         let mut written: u32 = 0;
-        let okw: BOOL = unsafe { WritePrinter(hprinter, data.as_ptr(), data.len() as u32, &mut written) };
-        let _ = unsafe { EndDocPrinterW(hprinter) };
+        let okw: windows::Win32::Foundation::BOOL = unsafe {
+            WritePrinter(hprinter, data.as_ptr() as *const c_void, data.len() as u32, &mut written)
+        };
+        let _ = unsafe { EndDocPrinter(hprinter) };
         if !okw.as_bool() {
             return Err("WritePrinter gagal mengirim ESC/POS.".into());
         }
         Ok(format!("Terkirim {} byte ke {nama_printer}.", written))
     })();
-    let _ = unsafe { EndDocPrinterW(hprinter) };
-    unsafe { ClosePrinter(hprinter) };
+    let _ = unsafe { EndDocPrinter(hprinter) };
+    let _ = unsafe { ClosePrinter(hprinter) };
     r
 }
 
