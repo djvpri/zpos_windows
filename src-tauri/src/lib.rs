@@ -499,6 +499,18 @@ fn export_log(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dst.to_string_lossy().into_owned())
 }
 
+// Tulis HTML nota transaksi ke file sementara (temp_dir/zpos-nota/). Frontend
+// lalu panggil `buka_url` → opener buka file itu di browser default, biar `print()`
+// jalan (WebView2 blokir window.open). Nama file unik per detik→hindari tabrakan.
+#[tauri::command]
+fn nota_temp(html: String) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("zpos-nota");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("gagal buat folder nota: {e}"))?;
+    let f = dir.join(format!("nota-{}.html", chrono::Local::now().format("%Y%m%d-%H%M%S-%3f")));
+    std::fs::write(&f, html).map_err(|e| format!("gagal tulis nota: {e}"))?;
+    Ok(f.to_string_lossy().into_owned())
+}
+
 // Timestamp readable lokal. chrono fitur `clock` (default) dipakai — bukan
 // SystemTime/epoch, supaya zpos-errors.log gampang diurut & dibaca.
 fn chrono_now() -> String {
@@ -554,7 +566,7 @@ fn run() {
             versi_app,
             buka_url,
             unduh_update, terapkan_update, keluar,
-            tulis_log, baca_log, export_log
+            tulis_log, baca_log, export_log, nota_temp
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
