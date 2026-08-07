@@ -1,6 +1,6 @@
 [package]
 name = "zpos-kasir"
-version = "0.1.27"
+version = "0.1.28"
 description = "ZPos Kasir — cashier desktop offline-first (Tauri + SQLite)"
 edition = "2021"
 
@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 bcrypt = "0.15"
 opener = "0.7"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 
 # Cetak nota langsung ke printer thermal via Windows Print Spooler (winspool).
 # Target-specific: hanya di-load saat build Windows — Linux/macOS tak terpengaruh.

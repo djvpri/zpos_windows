@@ -439,6 +439,29 @@ fn buka_url(url: String) -> Result<(), String> {
 // dikenal" (yang muncul hanya utk file unduhan browser). Trojan fallback saat
 // gagal swap: app lama tetap utuh, update.bin dibiarkan utk retry manual.
 
+// Update via tauri-plugin-updater (NSIS installer): cek manifest `latest.json`
+// di GitHub Release, unduh setup ter-sign, jalankan silent (autorestart).
+// `ActionResult`: "PASANG" sukses (app restart dr dalam), error → frontend
+// fallback ke jalur swap exe manual (`unduh_update`/`terapkan_update`).
+#[tauri::command]
+async fn apply_update(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| format!("init updater: {e}"))?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            update
+                .download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| format!("gagal pasang update: {e}"))?;
+            // `install` (Windows) sudah ShellExecuteW setup.exe silent →
+            // app restart sendiri via AUTOLAUNCHAPP. Tak ada way tp jaket lain.
+            Ok("PASANG".into())
+        }
+        Ok(None) => Err("Sudah versi terbaru.".into()),
+        Err(e) => Err(format!("cek update gagal: {e}")),
+    }
+}
+
 // Unduh exe baru ke app_data mengikuti pola atomic (nama temp → rename).
 // Retry 3x dgn client baru (koneksi segar). "error decoding response body"
 // dari reqwest sering muncul saat pooled-connection stale / response besar
@@ -737,6 +760,7 @@ fn run() {
                 let _ = w.show();
             }
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             if std::fs::create_dir_all(&dir).is_err() {
@@ -775,7 +799,7 @@ fn run() {
             setup_kasir, tambah_member, list_kategori_member,
             versi_app,
             buka_url,
-            unduh_update, terapkan_update, keluar,
+            unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, nota_temp,
             daftar_printer, cetak_escpos, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift

@@ -21,17 +21,25 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
-      - name: Build .exe (release)
+      - name: Install NSIS (bundler butuh makensis)
+        shell: bash
+        run: |
+          choco install nsis -y --no-progress || true
+
+      - name: Build (release + NSIS installer)
         working-directory: src-tauri
-        # --no-bundle: hasilkan biner .exe portable langsung (skip MSI/NSIS
-        # bundler yang butuh toolchain WiX/NSIS — sering gagal di runner Windows).
-        # `ponytail:` installer (MSI/NSIS) = beri `bundle.targets` wix/nsis utk Tauri
-        # di masa mendatang setelah webview biner terverifikasi.
-        run: cargo tauri build --no-bundle
+        # Bundle NSIS installer (`bundle.targets=["nsis"]` di tauri.conf.json).
+        # Hasil: target/release/zpos-kasir.exe (portable) + bundle/nsis/*-setup.exe.
+        # `.sig` & `latest.json` tak dihasilkan di CI — signature dibuat saat
+        # rilis manual (private key lokal, tak tersimpan di CI). Better keamanan.
+        run: cargo tauri build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
           name: zpos-kasir-windows-exe
-          path: src-tauri/target/release/*.exe
+          path: |
+            src-tauri/target/release/*.exe
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
           if-no-files-found: error

@@ -1302,11 +1302,23 @@
     const btn=document.getElementById('upBtn');
     btn.disabled=true; btn.textContent='Mengunduh...';
     try{
-      const path=await tinv('unduh_update',{url});
-      logErr('UPDT','unduh v'+latest+' siap');
-      toast('Update '+latest+' terunduh — aplikasi akan restart');
-      await tinv('terapkan_update',{payload:{targetPath:path, versiBaru:latest}});
-      setTimeout(()=>tinv('keluar').catch(()=>{}), 400);
+      // Jalur utama: tauri-plugin-updater (NSIS). Unduh setup ter-sign + pasang.
+      try{
+        const res=await tinv('apply_update');
+        logErr('UPDT','updater plugin: '+res);
+        toast('Update '+latest+' terpasang — aplikasi akan restart');
+        // `install` sudah ShellExecute setup.exe silent; app harus exit biar
+        // NSIS bisa overwrite exe (lock). AUTOLAUNCHAPP restart app baru.
+        await tinv('keluar').catch(()=>{});
+      }catch(uer){
+        // Fallback: app portable (lokasi exe sembarang) → swap exe manual.
+        logErr('UPDT','updater plugin gagal, fallback manual: '+uer);
+        const path=await tinv('unduh_update',{url});
+        logErr('UPDT','unduh v'+latest+' siap');
+        toast('Update '+latest+' terunduh — aplikasi akan restart');
+        await tinv('terapkan_update',{payload:{targetPath:path, versiBaru:latest}});
+        setTimeout(()=>tinv('keluar').catch(()=>{}), 400);
+      }
     }catch(e){
       showErr('Update gagal: '+e);
       btn.disabled=false; btn.textContent='Perbarui';
