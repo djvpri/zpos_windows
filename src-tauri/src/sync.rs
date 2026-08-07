@@ -92,7 +92,7 @@ pub struct ShiftAktif {
 
 // Rekap shift setelah tutup (dipakai frontend utk modal rekap).
 // Web `/api/shift/[id]` balik key snake_case (s.buka_at, jumlah_transaksi, dll).
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ShiftRekap {
     pub id: i64,
     #[serde(default)]
