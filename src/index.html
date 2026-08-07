@@ -1028,25 +1028,79 @@
       <div style="text-align:center;margin-top:6px"><strong>*** TERIMA KASIH ***</strong></div>
     </div>`;
   }
+  // ===== Cetak nota via ESC/POS ke printer thermal (Opsi A: spooler Windows) =====
+  // Bangun byte ESC/POS dari `notaTerakhir`, kirim direct ke driver printer via
+  // command Rust `cetak_escpos` (winspool) — tanpa buka browser/dialog. Cepat.
+  // Pilih printer: nama config toko > yang mengandung "RPP"/thermal > pertama.
+  function buildEscPos(n){
+    const esc=s=>String(s==null?'':s);
+    const rp=v=>'Rp '+(Number(v)||0).toLocaleString('id-ID');
+    const B=[]; // array of byte-strings, disatukan akhir
+    const line=s=>B.push(s+'\n');
+    const bold=s=>{ B.push('\x1bE\x01'+s+'\x1bE\x00\n'); };
+    const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
+    const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
+    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
+    B.push('\x1b@'); // init
+    center('\x1bE\x01ZPOS KASIR\x1bE\x00');
+    center('NOTA / STRUK BELANJA');
+    line('--------------------------------');
+    left('No : '+esc(n.noTransaksi));
+    left('Tgl: '+esc(n.waktu));
+    left('Ksr: '+esc(n.kasir));
+    left('Pay: '+esc(n.metode));
+    line('--------------------------------');
+    n.items.forEach(i=>{
+      const nm=esc(i.nama_produk);
+      if(nm.length>28){ B.push('\x1ba\x00'+nm.slice(0,28)+'\n'); B.push('\x1ba\x00  '+nm.slice(28)); }
+      else B.push('\x1ba\x00'+nm);
+      B.push((i.qty>1?' x'+i.qty:'')+' '.repeat(Math.max(1,32-(nm.length)+(i.qty>1?(nm.length>28?0:0):0)-(('Rp '+String(i.subtotal)).length)))+' '+rp(i.subtotal)+'\n');
+    });
+    line('--------------------------------');
+    totalLine('Subtotal', rp(n.subtotal));
+    totalLine('Diskon', '-'+rp(n.diskon));
+    const totLine='TOTAL';
+    B.push('\x1bE\x01\x1ba\x00'+totLine+' '.repeat(Math.max(1,32-totLine.length-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00');
+    totalLine('Bayar', rp(n.bayar));
+    totalLine('Kembalian', rp(n.kembali));
+    line('--------------------------------');
+    center('*** TERIMA KASIH ***');
+    B.push('\x1ba\x00\n\n\n');
+    B.push('\x1dV\x42'); // cut partial
+    return B.join('');
+  }
+  // Cetak via spooler: auto-pilih printer. Simpan pilihan di localStorage biar
+  // tak perlu enum tiap cetak (config toko belum punya field printer → cukup ini).
+  async function cetakSpooler(){
+    const n=notaTerakhir; if(!n){ toast('Belum ada transaksi utk dicetak.'); return; }
+    const escpos=buildEscPos(n);
+    let printer=localStorage.getItem('zpos_printer');
+    if(!printer){
+      try{
+        const list=await tinv('daftar_printer');
+        if(!list.length){ showErr('Tidak ada printer terpasang di Windows. Pasang driver RPP02N di Printers & scanners.'); return; }
+        printer=list.find(p=>/rpp|thermal|reciipt|pos/i.test(p))||list[0];
+        localStorage.setItem('zpos_printer',printer);
+      }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
+    }
+    try{
+      const msg=await tinv('cetak_escpos',{escpos,nama_printer:printer});
+      toast(msg||'Nota terkirim.');
+    }catch(e){ showErr('Cetak USB gagal: '+e); }
+  }
   function cetakNota(){
+    if(zposIsTauri()){ cetakSpooler(); return; } // Tauri → direct spooler (Opsi A)
     if(!notaTerakhir){ toast('Belum ada transaksi utk dicetak.'); return; }
     const html='<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Nota '+notaTerakhir.noTransaksi+'</title>'+
       '<style>body{margin:0}</style></head><body onload="window.print()">'+
       '<div id="cet" style="text-align:center;padding:10px;background:#4f7cff;color:#fff;font-family:sans-serif;font-weight:bold;cursor:pointer" onclick="window.print()">CETAK / CEK CETAK</div>'+
       notaHtml()+'</body></html>';
-    if(zposIsTauri()){
-      // WebView2 blokir window.open → tulis HTML ke file temp lalu buka di browser
-      // default via command Rust `opener` (buka_url). Browser bebas window.print().
-      tinv('nota_temp',{html}).then(path=>tinv('buka_url',{url:path}))
-        .then(()=>toast('Nota dibuka di browser — klik print di dialog.'))
-        .catch(e=>{ showErr('Cetak nota gagal: '+e); });
+    // (non-Tauri → fallback browser print lama)
+    const w=window.open('','_blank','width=380,height=640');
+    if(w){
+      w.document.write(html); w.document.close(); w.focus(); w.onload=function(){ w.print(); };
     } else {
-      const w=window.open('','_blank','width=380,height=640');
-      if(w){
-        w.document.write(html); w.document.close(); w.focus(); w.onload=function(){ w.print(); };
-      } else {
-        toast('Popup diblokir — izinkan popup utk nota.');
-      }
+      toast('Popup diblokir — izinkan popup utk nota.');
     }
   }
   function closeOv(){ document.getElementById('ov').classList.remove('show'); document.getElementById('printBtn').classList.add('hidden'); }

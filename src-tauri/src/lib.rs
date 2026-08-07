@@ -499,6 +499,115 @@ fn export_log(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dst.to_string_lossy().into_owned())
 }
 
+// --- Cetak nota langsung ke printer thermal via Windows Print Spooler ----------
+// Jalur Opsi A: kirim raw ESC/POS ke driver printer (RPP02N dll) tanpa buka
+// browser / dialog print tiap cetak → jauh lebih cepat. Windows-only.
+
+/// Daftar nama semua printer yang terpasang di Windows (EnumPrinters level 1).
+#[cfg(windows)]
+#[tauri::command]
+fn daftar_printer() -> Result<Vec<String>, String> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::Graphics::Printing::{
+        EnumPrintersW, PRINTER_ENUM_LOCAL, PRINTER_INFO_1W,
+    };
+    use windows::Win32::Foundation::BOOL;
+
+    let flags = PRINTER_ENUM_LOCAL;
+    let mut needed: u32 = 0;
+    let mut returned: u32 = 0;
+    // pass 1: hitung ukuran buffer
+    unsafe {
+        EnumPrintersW(flags, None, 1, None, 0, &mut needed, &mut returned);
+    }
+    if needed == 0 {
+        return Ok(Vec::new()); // tak ada printer lokal
+    }
+    let mut buf = vec![0u8; needed as usize];
+    let mut returned2: u32 = 0;
+    let ok: BOOL = unsafe {
+        EnumPrintersW(flags, None, 1, Some(buf.as_mut_ptr()), needed, &mut needed, &mut returned2)
+    };
+    if !ok.as_bool() {
+        return Err("EnumPrintersW gagal".into());
+    }
+    // PRINTER_INFO_1W { flags:u32, pDescription, pName, pComment } — pName di offset saat stride.
+    let stride = std::mem::size_of::<PRINTER_INFO_1W>();
+    let n = returned2 as usize;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let base = buf.as_ptr() as usize + i * stride;
+        let info = unsafe { &*(base as *const PRINTER_INFO_1W) };
+        unsafe {
+            if !info.pName.is_null() {
+                let name = info.pName.to_string().map_err(|e| format!("baca nama printer: {e}"))?;
+                out.push(name);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn daftar_printer() -> Result<Vec<String>, String> {
+    Err("Cetak via spooler hanya didukung di Windows.".into())
+}
+
+/// Kirim raw ESC/POS ke printer bernama `nama_printer`. String ESC/POS dihasilkan
+/// frontend (buildEscPos). Windows-only via OpenPrinter/StartDoc/WritePrinter.
+#[cfg(windows)]
+#[tauri::command]
+fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> {
+    use windows::core::{w, PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{BOOL, HANDLE};
+    use windows::Win32::Graphics::Printing::{
+        ClosePrinter, EndDocPrinterW, OpenPrinterW, StartDocPrinterW, WritePrinter, DOC_INFO_1W,
+    };
+
+    if nama_printer.trim().is_empty() {
+        return Err("Nama printer kosong.".into());
+    }
+    // encode nama → utf-16 null-terminated
+    let name16: Vec<u16> = nama_printer.encode_utf16().chain(Some(0)).collect();
+    let pname = PCWSTR(name16.as_ptr());
+
+    let mut hprinter: HANDLE = HANDLE::default();
+    let ok: BOOL = unsafe { OpenPrinterW(Some(pname), &mut hprinter, None) };
+    if !ok.as_bool() {
+        return Err(format!("Printer \"{nama_printer}\" tidak bisa dibuka. Pastikan driver RPP02N terpasang di Printers & scanners.").into());
+    }
+    // cegah leak & jangan pernah lupa close printer pada error
+    let r = (|| -> Result<String, String> {
+        let doc = DOC_INFO_1W {
+            pDocName: PWSTR(w!("ZPos nota").as_ptr() as *mut u16),
+            pOutputFile: PWSTR::null(),
+            pDatatype: PWSTR(w!("RAW").as_ptr() as *mut u16),
+        };
+        let job: i32 = unsafe { StartDocPrinterW(hprinter, 1, &doc) };
+        if job == 0 {
+            return Err("StartDocPrinter gagal.".into());
+        }
+        let data = escpos.as_bytes();
+        let mut written: u32 = 0;
+        let okw: BOOL = unsafe { WritePrinter(hprinter, data.as_ptr(), data.len() as u32, &mut written) };
+        let _ = unsafe { EndDocPrinterW(hprinter) };
+        if !okw.as_bool() {
+            return Err("WritePrinter gagal mengirim ESC/POS.".into());
+        }
+        Ok(format!("Terkirim {} byte ke {nama_printer}.", written))
+    })();
+    let _ = unsafe { EndDocPrinterW(hprinter) };
+    unsafe { ClosePrinter(hprinter) };
+    r
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> {
+    Err("Cetak via spooler hanya didukung di Windows.".into())
+}
+
 // Tulis HTML nota transaksi ke file sementara (temp_dir/zpos-nota/). Frontend
 // lalu panggil `buka_url` → opener buka file itu di browser default, biar `print()`
 // jalan (WebView2 blokir window.open). Nama file unik per detik→hindari tabrakan.
@@ -566,7 +675,8 @@ fn run() {
             versi_app,
             buka_url,
             unduh_update, terapkan_update, keluar,
-            tulis_log, baca_log, export_log, nota_temp
+            tulis_log, baca_log, export_log, nota_temp,
+            daftar_printer, cetak_escpos
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
