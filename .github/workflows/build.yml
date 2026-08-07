@@ -34,12 +34,17 @@ jobs:
         # rilis manual (private key lokal, tak tersimpan di CI). Better keamanan.
         run: cargo tauri build
 
+      - name: Package artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp src-tauri/target/release/zpos-kasir.exe dist/ 2>/dev/null || true
+          cp "src-tauri/target/release/bundle/nsis/ZPos Kasir"*.exe dist/ 2>/dev/null || true
+          ls -la dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: zpos-kasir-windows-exe
-          path: |
-            src-tauri/target/release/*.exe
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.sig
+          name: zpos-kasir-release
+          path: dist/
           if-no-files-found: error
