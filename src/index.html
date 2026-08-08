@@ -800,7 +800,7 @@
       const vid=-(Date.now()+Math.floor(Math.random()*10000));
       virtualProduk[vid]={ nama:it.nama, harga:it.harga };
       const f=cart.find(c=>c.id===vid);
-      if(f) f.q+=it.qty; else cart.push({id:vid, qty:it.qty});
+      if(f) f.q+=it.qty; else cart.push({id:vid, q:it.qty});
     });
     lainItems=[]; renderLainItems();
     tutupLain(); renderCart();
