@@ -631,9 +631,12 @@ fn daftar_printer() -> Result<Vec<String>, String> {
     const PRINTER_ENUM_LOCAL: u32 = 0x00000002;
     let mut needed: u32 = 0;
     let mut returned: u32 = 0;
-    // pass 1: hitung ukuran buffer
-    unsafe { EnumPrintersW(PRINTER_ENUM_LOCAL, None, 1, None, &mut needed, &mut returned) }
-        .map_err(|e| format!("EnumPrintersW (query) gagal: {e}"))?;
+    // pass 1: hitung ukuran buffer. EnumPrintersW dgn buffer NULL (None) SELALU
+    // return FALSE + ERROR_INSUFFICIENT_BUFFER (0x8007007A) utk query ukuran—ini
+    // PERILAKU YANG DIHARAPKAN dua-pass, BUKAN kegagalan. Jangan `?` di sini
+    // (pakai 0x8007007A, seen user melapor: 'Gagal enumerasi printer'). Cukup
+    // baca `needed` hasil; kalau 0 berarti tak ada printer lokal.
+    let _hr = unsafe { EnumPrintersW(PRINTER_ENUM_LOCAL, None, 1, None, &mut needed, &mut returned) };
     if needed == 0 {
         return Ok(Vec::new()); // tak ada printer lokal
     }
