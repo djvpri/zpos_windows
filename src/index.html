@@ -700,7 +700,8 @@
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const disc=Math.round(sub*0.09/1000)*1000; // contoh diskon 9%
+    const disc=0; // diskon total sengaja 0 (tidak ada diskon otomatis; harga member
+    // sudah diterapkan per-item lewat hargaMember). Tambah manual nanti di layar bayar.
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
     document.getElementById('disc').textContent='-'+fmt(disc);
@@ -910,9 +911,9 @@
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
-    // renderCart: sub = Σ harga memakai harga member, disc 9%.
+    // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const disc=Math.round(sub*0.09/1000)*1000;
+    const disc=0;
     bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     toast('Bon digantung atas nama '+member.n);
@@ -965,7 +966,7 @@
       if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
     const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
+    const diskon=0; // diskon total 0 (total = subtotal; konsisten dgn renderCart)
     const total=subtotal-diskon;
     // Tunai & QRIS/Transfer → alur beda. Tunai: tanya uang diterima & hitung
     // kembalian (modal). QRIS/Transfer: bayar = tepat total, tanpa kembalian.
@@ -1018,7 +1019,7 @@
       return { produk_id: c.id>0?c.id:null, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
     }).filter(Boolean);
     const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
-    const diskon=Math.round(subtotal*0.09/1000)*1000; // diskon 9% (sama dgn renderCart)
+    const diskon=0; // diskon total 0 (total = subtotal; konsisten dgn renderCart)
     const noTransaksi='TRX-'+Date.now().toString().slice(-8); // format noTrx() di web
     const payload={
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
