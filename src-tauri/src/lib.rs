@@ -442,6 +442,41 @@ fn daftar_kas_keluar(state: State<AppState>, base_url: String, shift_id: i64) ->
     c.daftar_kas_keluar(shift_id)
 }
 
+// Simpan bon gantung ke server → POST /api/bon. `produk` = {"<id>": qty} (JSON)
+// hanya item asli (id>0); item virtual tidak bisa digantung ke web bon.
+#[tauri::command]
+fn kirim_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, produk: String, total: i64) -> Result<i64, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.kirim_bon(&nama, &produk, total);
+    match &r {
+        Ok(id) => submit_log(&app, &format!("bon gantung {nama} → id {id}")),
+        Err(e) => submit_log(&app, &format!("bon gantung GAGAL ({nama}): {e}")),
+    }
+    r
+}
+
+// Tandai bon selesai (dibayar via windows) → PATCH /api/bon/{id}.
+#[tauri::command]
+fn tandai_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64) -> Result<(), String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.tandai_bon_selesai(bon_id);
+    match &r {
+        Ok(()) => submit_log(&app, &format!("bon #{bon_id} selesai")),
+        Err(e) => submit_log(&app, &format!("bon #{bon_id} selesai GAGAL: {e}")),
+    }
+    r
+}
+
 // Shift aktif kasir dari cache lokal (`meta.shift_{user_id}`, diisi buka_shift/cek_shift).
 // Offline-safe; dipakai frontend utk banner + kirim shift_id di prosesBayar.
 #[tauri::command]
@@ -940,7 +975,8 @@ fn run() {
             tulis_log, baca_log, export_log, nota_temp,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift,
-            saldo_shift, kirim_kas_keluar, daftar_kas_keluar
+            saldo_shift, kirim_kas_keluar, daftar_kas_keluar,
+            kirim_bon, tandai_bon
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

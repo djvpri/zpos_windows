@@ -962,12 +962,23 @@
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
+    _bonId = 0; // mulai sesi bon baru
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
     // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=0;
     bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
+    // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
+    // (id>0) — web bon butuh ref produk; item virtual (id negatif) tetap lokal.
+    const webProduk = {};
+    cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
+    if(zposIsTauri() && Object.keys(webProduk).length){
+      const idx = bon.length-1;
+      tinv('kirim_bon',{ nama: member.n, produk: JSON.stringify(webProduk), total: sub-disc })
+        .then(serverId=>{ bon[idx].bonId=serverId; })
+        .catch(()=>{}); // offline → tetap lokal, tak masuk web
+    }
     toast('Bon digantung atas nama '+member.n);
     clearCart();
   }
@@ -987,12 +998,14 @@
     const b=bon[x];
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
+    _bonId = b.bonId || 0; // kalau bon pernah terkirim ke server, tandai selesai saat dibayar di windows
     bon.splice(x,1);
     document.getElementById('bonModal').classList.remove('show');
     toast('Bon ditarik');
     renderCart();
   }
   let _bonHapusIdx = -1;
+  let _bonId = 0; // id bon server yang sedang ditarik → ditandai selesai saat bayar
   function hapusBon(x){ _bonHapusIdx = x; document.getElementById('konfBonModal').classList.add('show'); }
   function tutupKonfBon(){ document.getElementById('konfBonModal').classList.remove('show'); }
   function konfirmasiHapusBon() {
@@ -1082,7 +1095,12 @@
     };
     if(zposIsTauri()){
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
-        .then(()=>{ offQtn++; renderOffQ(); })
+        .then(()=>{
+          offQtn++; renderOffQ();
+          // Bon server yang ditarik tadi sudah terlunasi → tandai selesai biar tak
+          // mengambang aktif di tab Bon web.
+          if(_bonId){ const bid=_bonId; _bonId=0; tinv('tandai_bon',{bonId:bid}).catch(()=>{}); }
+        })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
       offQtn++;

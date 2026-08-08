@@ -610,4 +610,39 @@ impl SyncClient {
         }
         Ok(pushed)
     }
+
+    /// Simpan bon gantung ke server (`/api/bon`) supaya tampil di Laporan web.
+    /// `produk` = {"<produk_id>": qty} hanya utk produk ASLI (id>0); item virtual
+    /// (id negatif) tidak bisa digantung ke server (bon web butuh ref produk).
+    pub fn kirim_bon(&self, nama: &str, produk: &str, total: i64) -> Result<i64, String> {
+        let body: Value = serde_json::json!({
+            "nama": if nama.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(nama.to_string()) },
+            "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
+            "total": total,
+        });
+        let resp = self.http.post(self.endpoint("/api/bon"))
+            .header("Cookie", self.auth_cookie())
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("bon: {}", self.err_detail(resp)));
+        }
+        let r: Value = resp.json().map_err(|e| format!("json: {e}"))?;
+        r.get("id").and_then(|v| v.as_i64()).ok_or_else(|| "server tak kembalikan bon id".into())
+    }
+
+    /// Tandai bon selesai (dibayar) di server (`PATCH /api/bon/{id}`) biar tak
+    /// mengambang aktif di tab Bon web saat bayar lewat windows.
+    pub fn tandai_bon_selesai(&self, bon_id: i64) -> Result<(), String> {
+        let resp = self.http.patch(self.endpoint(&format!("/api/bon/{bon_id}")))
+            .header("Cookie", self.auth_cookie())
+            .json(&serde_json::json!({ "selesai": true }))
+            .send().map_err(|e| format!("network: {e}"))?;
+        // 404 = bon tak ada (mungkin uda dihapus dari web) → anggap tak masalah.
+        if resp.status().is_success() || resp.status().as_u16() == 404 {
+            Ok(())
+        } else {
+            Err(format!("tutup bon {}: {}", bon_id, self.err_detail(resp)))
+        }
+    }
 }
