@@ -350,10 +350,8 @@
         <button class="sbtn" id="setSetupBtn" style="margin-top:6px">Setup & Tarik Karyawan</button>
       </div>
 
-      <!-- Jalur token manual (admin/dukungan, utk sync lanjutan) -->
+      <!-- Sinkron ulang dengan kredensial yang sudah tersimpan (dari Setup email). -->
       <div class="fld" style="margin-top:10px">
-        <label>Token autentikasi ZPos</label>
-        <input id="setToken" placeholder="token autentikasi ZPos (opsional utk setup)" />
         <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
       </div>
 
@@ -1430,11 +1428,10 @@
   function openSet(){
     refreshErrLog();  // tampilkan log error terbaru saat modal dibuka
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
-    document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
     muatPrinterOpts();  // isi dropdown printer aktif
     const lac=document.getElementById('setLaciCetak'); if(lac) lac.checked = laciCetakAktif();
     document.getElementById('setModal').classList.add('show');
-    setTimeout(()=>document.getElementById('setToken').focus(),60);
+    setTimeout(()=>document.getElementById('setUser').focus(),60);
   }
   // Isi dropdown 'Printer Aktif' di modal setelan dari daftar printer Windows.
   // Kalau zpos_printer belum dipilih manual, auto-pilih RPP/thermal scr aktif.
@@ -1520,15 +1517,15 @@
 
   function saveSet(){
     const base=document.getElementById('setUrl').value.trim();
-    const token=document.getElementById('setToken').value.trim();
     if(!base){ toast('Base URL wajib diisi'); return; }
     localStorage.setItem('zpos_base', base);
-    localStorage.setItem('zpos_token', token);
     tutupSet();
     toast('Menyinkron...');
-    tinv('sync_remote',{baseUrl:base, token})
+    // Token dipakai dari meta.token_jwt (hasil Setup email+password) — field token
+    // manual dihapus dari UI. Kalau belum pernah Setup, sync_remote 401 → suruh Setup.
+    tinv('sync_remote',{baseUrl:base, token:''})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)); logErr('SINK', 'saveSet sync gagal: '+(e&&e.message?e.message:e)); });
+      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)+(localStorage.getItem('zpos_base')?' — lakukan Setup toko (email admin) dulu':'')); logErr('SINK', 'saveSet sync gagal: '+(e&&e.message?e.message:e)); });
   }
   // Setup pertama: login email+password admin tenant (tanpa tempel JWT manual).
   // Server validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
