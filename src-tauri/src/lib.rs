@@ -629,8 +629,12 @@ fn daftar_printer() -> Result<Vec<String>, String> {
     use windows::core::PWSTR;
     use windows::Win32::Graphics::Printing::{EnumPrintersW, PRINTER_INFO_1W};
 
-    // flags = PRINTER_ENUM_LOCAL (0x2). EnumPrinters level 1 cukup utk nama printer.
+    // flags = PRINTER_ENUM_LOCAL (0x2) | PRINTER_ENUM_CONNECTIONS (0x4) biar USB
+    // terpasang lokal + printer shared jaringan ikut ter-enumerasi (RPP02N via
+    // USB muncul di spooler; printer BT virtual COM TIDAK—itu di luar spooler).
     const PRINTER_ENUM_LOCAL: u32 = 0x00000002;
+    const PRINTER_ENUM_CONNECTIONS: u32 = 0x00000004;
+    let flags: u32 = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
     let mut needed: u32 = 0;
     let mut returned: u32 = 0;
     // pass 1: hitung ukuran buffer. EnumPrintersW dgn buffer NULL (None) SELALU
@@ -638,7 +642,7 @@ fn daftar_printer() -> Result<Vec<String>, String> {
     // PERILAKU YANG DIHARAPKAN dua-pass, BUKAN kegagalan. Jangan `?` di sini
     // (pakai 0x8007007A, seen user melapor: 'Gagal enumerasi printer'). Cukup
     // baca `needed` hasil; kalau 0 berarti tak ada printer lokal.
-    let _hr = unsafe { EnumPrintersW(PRINTER_ENUM_LOCAL, None, 1, None, &mut needed, &mut returned) };
+    let _hr = unsafe { EnumPrintersW(flags, None, 1, None, &mut needed, &mut returned) };
     if needed == 0 {
         return Ok(Vec::new()); // tak ada printer lokal
     }
@@ -646,7 +650,7 @@ fn daftar_printer() -> Result<Vec<String>, String> {
     let mut returned2: u32 = 0;
     unsafe {
         EnumPrintersW(
-            PRINTER_ENUM_LOCAL,
+            flags,
             None,
             1,
             Some(&mut buf[..]),
