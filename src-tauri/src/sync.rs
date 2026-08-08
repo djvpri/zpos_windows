@@ -327,6 +327,8 @@ impl SyncClient {
         #[derive(Deserialize)]
         struct Me {
             #[serde(default)]
+            nama: String,
+            #[serde(default)]
             plan: String,
             #[serde(default)]
             aktif: bool,
@@ -337,7 +339,7 @@ impl SyncClient {
         }
         let me: Me = resp.json().map_err(|e| format!("json: {e}"))?;
         let v = serde_json::json!({
-            "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
+            "nama": me.nama, "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
             "langganan_sampai": me.langganan_sampai,
         }).to_string();
         conn.execute(

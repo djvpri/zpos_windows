@@ -12,8 +12,10 @@
   .frame { background:#fff; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.15); overflow:hidden; width:100%; }
   /* Header */
   .hdr { display:flex; align-items:center; gap:12px; padding:12px 16px; background:#1e2f4d; color:#fff; }
-  .hdr .logo { display:flex; align-items:center; }
-  .hdr .logo img { height:40px; width:auto; display:block; object-fit:contain; }
+  .hdr .logo { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+  .hdr .logo img { height:36px; width:auto; display:block; object-fit:contain; }
+  .hdr .logoToko { font-size:10px; font-weight:600; letter-spacing:.02em; color:rgba(255,255,255,.72);
+                   max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* Badge kasir — avatar inisial + nama (Varian B) */
   .usr { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:4px 12px 4px 5px; cursor:pointer; transition:.12s; }
   .usr .av { width:26px; height:26px; border-radius:50%; background:#2f81f7; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; }
@@ -208,7 +210,7 @@
 
   <!-- Header -->
   <div class="hdr">
-    <div class="logo"><img src="logo.png" alt="ZPos Kasir" /></div>
+    <div class="logo"><img src="logo.png" alt="ZPos Kasir" /><span class="logoToko" id="logoToko"></span></div>
     <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
     <div class="right">
       <div class="licBadge" id="licBadge" title="Lisensi toko"><i class="bi bi-shield-check"></i><span id="licTxt">—</span></div>
@@ -1159,6 +1161,9 @@
     const badge=document.getElementById('licBadge'), txt=document.getElementById('licTxt');
     if(!zposIsTauri()){ badge.classList.add('hidden'); return; }
     tinv('ambil_lisensi').then(l=>{
+      // Nama toko di-cache bareng lisensi (`/api/auth/me` .nama) → subtitle header.
+      const lt=document.getElementById('logoToko');
+      if(lt) lt.textContent=(l&&l.nama)?l.nama:'';
       if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
       let expiredAt=l.langganan_sampai?new Date(l.langganan_sampai.replace(' ','T').replace(/Z$/,'')+'Z').getTime():null;
       if(!expiredAt||isNaN(expiredAt)){ badge.classList.add('hidden'); LISENSI={free:true}; return; }

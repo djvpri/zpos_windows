@@ -320,6 +320,8 @@ fn list_kategori_member(state: State<AppState>) -> Result<Vec<sync::RemoteKatego
 #[derive(Serialize, Deserialize)]
 struct Lisensi {
     #[serde(default)]
+    nama: String,
+    #[serde(default)]
     plan: String,
     #[serde(default)]
     aktif: bool,
