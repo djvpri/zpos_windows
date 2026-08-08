@@ -319,7 +319,7 @@ impl SyncClient {
     // statusToko). Kasir simpan hasilnya di meta `lisensi` (JSON) biar bisa
     // dibaca offline. Endpoint ini pakai getTokoFromRequest (cookie token) — siapa
     // pun user toko yg valid boleh akses (kasir/admin). Token sync = admin.
-    pub fn pull_license(&self, conn: &mut Connection) -> Result<(), String> {
+    pub fn pull_license(&self, conn: &mut Connection) -> Result<String, String> {
         let resp = self.http.get(self.endpoint("/api/auth/me"))
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
@@ -347,7 +347,7 @@ impl SyncClient {
              ON CONFLICT(k) DO UPDATE SET v=excluded.v",
             [&v],
         ).map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(me.nama)
     }
 
     // Simpan JSON shift aktif per user ke meta (utk baca offline oleh `ambil_shift`).

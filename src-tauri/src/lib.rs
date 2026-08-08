@@ -230,6 +230,28 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     let c = sync::SyncClient::new(base_url.clone(), token);
 
     let r = (|| -> Result<(usize, usize, usize, usize, usize, usize), String> {
+        // `/api/auth/me` pertama: validasi token + dapat nama toko. Nama toko ini
+        // dipakai deteksi GANTI TENANT — kalau beda dari sync sebelumnya, bersihkan
+        // cache katalog/member lokal (produk/kategori upsert tak pernah hapus baris
+        // dari toko lama, jadi kalau tak di-clear katalog tercampur antar tenant).
+        let toko = c.pull_license(conn)?;  // Juga cache lisensi; return nama toko.
+        let last: String = conn.query_row(
+            "SELECT v FROM meta WHERE k='toko_terakhir'", [], |r| r.get::<_, String>(0),
+        ).unwrap_or_default();
+        // Kosong (belum tercatat / upgrade pertama) → anggap beda, bersihkan juga.
+        // Pull isi-ulang penuh dari token valid, jadi hapus cache tak merugikan
+        // (malah memastikan cache yg uda tercampur antar-tenant ikut dibersihkan).
+        if last != toko {
+            submit_log(&app, &format!("sync GANTI TENANT '{last}' -> '{toko}': bersihkan cache katalog/member"));
+            for tbl in ["produk", "kategori", "member", "harga_member"] {
+                conn.execute(&format!("DELETE FROM {tbl}"), []).map_err(|e| e.to_string())?;
+            }
+        }
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES ('toko_terakhir',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            [&toko],
+        ).map_err(|e| e.to_string())?;
+
         let n_kat = c.pull_kategori(conn)?;
         let n_produk = c.pull_produk(conn)?;
         let n_km = c.pull_kategori_member(conn)?;
@@ -243,12 +265,6 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
                 0
             }
         };
-        // pull_license juga best-effort: kalau `/api/auth/me` gagal (kasir role yg
-        // tokennya mungkin non-admin? no — me utk semua user valid), biarkan cache
-        // lisensi lama tetap. Gagal tarik lisensi TIDAK merusak sync.
-        if let Err(e) = c.pull_license(conn) {
-            submit_log(&app, &format!("sync pull_license SKIP: {e}"));
-        }
         let n_push = c.push_antrian(conn)?;
         Ok((n_kat, n_produk, n_km, n_member, n_user, n_push))
     })();
