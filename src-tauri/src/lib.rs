@@ -740,7 +740,7 @@ fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> 
 /// Reuse jalur raw spooler yg sama dgn cetak_escpos (OpenPrinter/WritePrinter).
 #[cfg(windows)]
 #[tauri::command]
-fn buka_laci(nama_printer: String) -> Result<String, String> {
+fn buka_laci(app: tauri::AppHandle, nama_printer: String) -> Result<String, String> {
     use std::os::raw::c_void;
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HANDLE;
@@ -752,11 +752,17 @@ fn buka_laci(nama_printer: String) -> Result<String, String> {
     if nama_printer.trim().is_empty() {
         return Err("Nama printer kosong.".into());
     }
+    // Jejak buka laci di zpos-errors.log — bedain manual (tombol) vs auto (ssdh nota):
+    // dua-duanya panggil buka_laci, tapi kalau laci diam, log ini tunjuk di mana gagalnya.
+    submit_log(&app, &format!("BUKA_LACI_TRY printer={nama_printer}"));
     let name16: Vec<u16> = nama_printer.encode_utf16().chain(Some(0)).collect();
     let pname = PCWSTR(name16.as_ptr());
     let mut hprinter: HANDLE = HANDLE::default();
-    unsafe { OpenPrinterW(pname, &mut hprinter, None) }
-        .map_err(|_| format!("Printer \"{nama_printer}\" tidak bisa dibuka — pastikan driver terpasang di Printers & scanners."))?;
+    if let Err(e) = unsafe { OpenPrinterW(pname, &mut hprinter, None) } {
+        let msg = format!("Printer \"{nama_printer}\" tidak bisa dibuka — pastikan driver terpasang di Printers & scanners. ({e})");
+        submit_log(&app, &fmt!("BUKA_LACI_FAIL open: {msg}"));
+        return Err(msg);
+    }
     let r = (|| -> Result<String, String> {
         let doc = DOC_INFO_1W {
             pDocName: PWSTR(w!("ZPos laci").as_ptr() as *mut u16),
@@ -780,12 +786,17 @@ fn buka_laci(nama_printer: String) -> Result<String, String> {
     })();
     let _ = unsafe { EndDocPrinter(hprinter) };
     let _ = unsafe { ClosePrinter(hprinter) };
+    match &r {
+        Ok(m) => submit_log(&app, &fmt!("BUKA_LACI_OK {m}")),
+        Err(e) => submit_log(&app, &fmt!("BUKA_LACI_FAIL {e}")),
+    }
     r
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-fn buka_laci(nama_printer: String) -> Result<String, String> {
+fn buka_laci(app: tauri::AppHandle, nama_printer: String) -> Result<String, String> {
+    let _ = (app, nama_printer);
     Err("Buka laci hanya didukung di Windows.".into())
 }
 
