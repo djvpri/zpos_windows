@@ -830,7 +830,7 @@
     const base=localStorage.getItem('zpos_base');
     if(!base){ msg.textContent='Belum di-setup. Isi Base URL dulu (Pengaturan).'; return; }
     const btn=document.getElementById('amBtn'); btn.disabled=true; btn.textContent='Menyimpan…';
-    tinv('tambah_member',{baseUrl:base, nama, telepon:telp, kategori_member_id:katId})
+    tinv('tambah_member',{baseUrl:base, nama, telepon:telp, kategoriMemberId:katId})
       .then(()=>{
         btn.disabled=false; btn.innerHTML='<i class="bi bi-person-plus"></i> Daftarkan';
         tutupAddMember();
@@ -1105,7 +1105,7 @@
       }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
     }
     try{
-      const msg=await tinv('cetak_escpos',{escpos,nama_printer:printer});
+      const msg=await tinv('cetak_escpos',{escpos,namaPrinter:printer});
       toast(msg||'Nota terkirim.');
     }catch(e){ showErr('Cetak USB gagal: '+e); }
   }
@@ -1123,7 +1123,7 @@
       }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
     }
     try{
-      const msg=await tinv('buka_laci',{nama_printer:printer});
+      const msg=await tinv('buka_laci',{namaPrinter:printer});
       toast(msg||'Laci dibuka.');
     }catch(e){ showErr('Buka laci gagal: '+e); }
   }
