@@ -1144,6 +1144,8 @@
     try{
       const msg=await tinv('cetak_escpos',{escpos,namaPrinter:printer});
       toast(msg||'Nota terkirim.');
+      // Buka laci otomatis stlh nota tercetak (pulsa ESC p ke printer yg sama).
+      await bukaLaci();
     }catch(e){ showErr('Cetak USB gagal: '+e); }
   }
   // Buka laci kasir via printer (ESC/POS ESC p). Kirim ke printer yg sama dgn
