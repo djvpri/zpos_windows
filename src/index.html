@@ -408,6 +408,21 @@
   </div>
 </div>
 
+<!-- Modal Rekap Shift: tampilan rapi + opsi cetak ke printer thermal -->
+<div class="modal" id="rkModal">
+  <div class="mc" style="max-width:340px">
+    <div class="mch"><span><i class="bi bi-receipt-cutoff"></i> Rekap Shift</span><span class="x" onclick="tutupRekap()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div id="rkHead" style="font-size:12px;color:#5a6577;margin-bottom:4px"></div>
+      <div id="rkBody" style="display:flex;flex-direction:column;gap:7px"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="sbtn" onclick="cetakRekap()" style="flex:1"><i class="bi bi-printer"></i> Cetak Thermal</button>
+        <button style="flex:1;padding:8px;border:1px solid #e2e6ee;background:#fff;color:#5a6577;border-radius:9px;cursor:pointer" onclick="tutupRekap()">Selesai</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Penjualan Lainnya: item/jasa harga bebas (salin fitur ZPos web) -->
 <div class="modal" id="nlModal">
   <div class="mc" style="max-width:400px">
@@ -1172,6 +1187,38 @@
       toast(msg||'Laci dibuka.');
     }catch(e){ showErr('Buka laci gagal: '+e); }
   }
+  // Bangun ESC/POS utk rekap shift (sama pola `buildEscPos`). Header REKAP SHIFT,
+  // ringkasan transaksi, lalu struktur laci tak ikut — cetak rekap TANPA buka laci.
+  function buildEscRekap(r){
+    const esc=s=>String(s==null?'':s);
+    const rp=v=>'Rp '+(Number(v)||0).toLocaleString('id-ID');
+    const B=[];
+    const line=s=>B.push(s+'\n');
+    const bold=s=>{ B.push('\x1bE\x01'+s+'\x1bE\x00\n'); };
+    const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
+    const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
+    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
+    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
+    B.push('\x1b@'); // init
+    center('\x1bE\x01REKAP SHIFT\x1bE\x00');
+    center('#'+esc(r.id)+' — '+esc(r.kasir_nama||''));
+    line('--------------------------------');
+    left('Buka : '+esc(fmtTgl(r.buka_at)));
+    left('Tutup: '+esc(fmtTgl(r.tutup_at)));
+    left('Trans: '+esc((Number(r.jumlah_transaksi)||0))+'x');
+    line('--------------------------------');
+    totalLine('Modal Awal', rp(r.modal_awal));
+    bold('TOTAL PENJUALAN: '+rp(r.total_penjualan));
+    totalLine('Tunai', rp(r.total_tunai));
+    totalLine('QRIS', rp(r.total_qris));
+    totalLine('Transfer', rp(r.total_transfer));
+    line('--------------------------------');
+    totalLine('Kas Akhir', rp(kasAkhir));
+    center('*** SELESAI ***');
+    B.push('\x1ba\x00\n\n\n');
+    B.push('\x1dV\x42'); // cut partial
+    return B.join('');
+  }
   // Isi select 'prPick' di modal pilih printer (C) dr daftar printer Windows.
   function muatPrPick(){
     const sel=document.getElementById('prPick'); if(!sel) return;
@@ -1319,24 +1366,41 @@
       SHIFT=s; refShift(); toast('Shift #'+s.id+' dibuka. Modal '+fmt(s.modal_awal||0));
     }).catch(e=>toast('Gagal buka shift: '+e));
   }
+  // Simpan rekap shift terakhir utk tombol Cetak ulang (modal `rkModal`).
+  let rekapTerakhir = null;
+  function tutupRekap(){ document.getElementById('rkModal').classList.remove('show'); }
+  // Renders rekap shift ke modal rapi (bukan `alert` text polos).
   function tampilRekap(r){
+    rekapTerakhir=r;
     const rp=v=>'Rp '+(Number(v)||0).toLocaleString('id-ID');
-    const nl=s=>(s==null?'0':s);
-    const txt=[
-      '=== REKAP SHIFT #'+r.id+' ===',
-      'Kasir: '+nl(r.kasir_nama),
-      'Buka: '+fmtTgl(r.buka_at)+'  Tutup: '+fmtTgl(r.tutup_at),
-      'Transaksi: '+nl(r.jumlah_transaksi)+'x',
-      '----------------------------',
-      'Modal awal : '+rp(r.modal_awal),
-      'Penjualan  : '+rp(r.total_penjualan),
-      'Tunai      : '+rp(r.total_tunai),
-      'QRIS       : '+rp(r.total_qris),
-      'Transfer   : '+rp(r.total_transfer),
-      '----------------------------',
-      'Kas akhir  : '+rp((Number(r.modal_awal)||0)+(Number(r.total_tunai)||0)),
-    ].join('\n');
-    alert(txt);
+    const nl=v=>(Number(v)||0).toLocaleString('id-ID');
+    const row=(l,v,bold)=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;${bold?'font-weight:700;color:#111;':''}"><span style="color:#5a6577">${l}</span><span>${v}</span></div>`;
+    document.getElementById('rkHead').innerHTML =
+      `<div style="font-weight:700;color:#111;font-size:14px">Shift #${r.id}</div>`+
+      `<div>Kasir: ${r.kasir_nama||'-'}</div>`+
+      `<div style="font-size:11px;color:#98a2b3">${fmtTgl(r.buka_at)} → ${fmtTgl(r.tutup_at)}</div>`;
+    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
+    document.getElementById('rkBody').innerHTML =
+      `${row('Modal Awal', rp(r.modal_awal))}`+
+      `<div style="border-top:1px dashed #e2e6ee;margin:2px 0"></div>`+
+      `${row('Total Penjualan', rp(r.total_penjualan), true)}`+
+      `${row('Tunai', rp(r.total_tunai))}`+
+      `${row('QRIS', rp(r.total_qris))}`+
+      `${row('Transfer', rp(r.total_transfer))}`+
+      `<div style="border-top:1px dashed #e2e6ee;margin:2px 0"></div>`+
+      `${row('Kas Akhir (tunai)', rp(kasAkhir), true)}`+
+      `<div style="text-align:center;font-size:12px;color:#98a2b3;margin-top:2px">${nl(r.jumlah_transaksi)} transaksi</div>`;
+    document.getElementById('rkModal').classList.add('show');
+  }
+  // Cetak rekap shift ke printer thermal (reuse alur ESC/POS cetak nota).
+  async function cetakRekap(){
+    const r=rekapTerakhir; if(!r){ toast('Belum ada rekap utk dicetak.'); return; }
+    const printer=await ambilPrinterAuto();
+    if(!printer){ toast('Printer belum dipilih.'); return; }
+    try{
+      const msg=await tinv('cetak_escpos',{escpos:buildEscRekap(r),namaPrinter:printer});
+      toast(msg||'Rekap terkirim.');
+    }catch(e){ showErr('Cetak rekap gagal: '+e); logErr('CTK','cetakRekap: '+(e&&e.message?e.message:e)); }
   }
   function renderOffQ(){
     const w=document.getElementById('offq'), n=document.getElementById('offqN'), s=document.getElementById('simOnline');
