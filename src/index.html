@@ -260,7 +260,6 @@
       <div class="items" id="items"></div>
       <div class="summ">
         <div class="row"><span>Subtotal</span><span id="sub">Rp0</span></div>
-        <div class="row"><span>Diskon</span><span id="disc">-Rp0</span></div>
         <div class="row total"><span>TOTAL</span><span id="total">Rp0</span></div>
       </div>
       <div class="paybtns">
@@ -726,8 +725,7 @@
     // sudah diterapkan per-item lewat hargaMember). Tambah manual nanti di layar bayar.
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
-    document.getElementById('disc').textContent='-'+fmt(disc);
-    document.getElementById('total').textContent=fmt(sub-disc);
+    document.getElementById('total').textContent=fmt(sub);
     document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
     const ph=document.getElementById('payHang'); if(ph) ph.disabled = !cart.length || !member;
     const aktif=bon.length;
