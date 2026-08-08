@@ -760,7 +760,7 @@ fn buka_laci(app: tauri::AppHandle, nama_printer: String) -> Result<String, Stri
     let mut hprinter: HANDLE = HANDLE::default();
     if let Err(e) = unsafe { OpenPrinterW(pname, &mut hprinter, None) } {
         let msg = format!("Printer \"{nama_printer}\" tidak bisa dibuka — pastikan driver terpasang di Printers & scanners. ({e})");
-        submit_log(&app, &fmt!("BUKA_LACI_FAIL open: {msg}"));
+        submit_log(&app, &format!("BUKA_LACI_FAIL open: {msg}"));
         return Err(msg);
     }
     let r = (|| -> Result<String, String> {
@@ -787,8 +787,8 @@ fn buka_laci(app: tauri::AppHandle, nama_printer: String) -> Result<String, Stri
     let _ = unsafe { EndDocPrinter(hprinter) };
     let _ = unsafe { ClosePrinter(hprinter) };
     match &r {
-        Ok(m) => submit_log(&app, &fmt!("BUKA_LACI_OK {m}")),
-        Err(e) => submit_log(&app, &fmt!("BUKA_LACI_FAIL {e}")),
+        Ok(m) => submit_log(&app, &format!("BUKA_LACI_OK {m}")),
+        Err(e) => submit_log(&app, &format!("BUKA_LACI_FAIL {e}")),
     }
     r
 }
