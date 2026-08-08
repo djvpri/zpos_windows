@@ -368,6 +368,15 @@
         <div style="font-size:11px;color:#98a2b3;margin-top:4px">Printer dipakai utk cetak nota &amp; buka laci. Pilih manual atau biarkan otomatis.</div>
       </div>
 
+      <!-- Opsi: buka laci otomatis tiap cetak nota (localStorage zpos_laci_cetak). -->
+      <div class="fld" style="margin-top:10px">
+        <label style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span><i class="bi bi-safe2"></i> Buka Laci Saat Cetak</span>
+          <input type="checkbox" id="setLaciCetak" onchange="toggleLaciCetak(this.checked)" style="width:18px;height:18px;accent-color:#1971c2" />
+        </label>
+        <div style="font-size:11px;color:#98a2b3;margin-top:4px">Laci kasir (kabel RJ ke printer) ngepop otomatis tiap cetak nota. Matikan kalau tak diinginkan.</div>
+      </div>
+
       <!-- Diagnosa: log error otomatis (dari zpos-errors.log) -->
       <div class="fld" style="margin-top:10px">
         <label style="display:flex;justify-content:space-between;align-items:center">
@@ -1144,8 +1153,13 @@
     try{
       const msg=await tinv('cetak_escpos',{escpos,namaPrinter:printer});
       toast(msg||'Nota terkirim.');
-      // Buka laci otomatis stlh nota tercetak (pulsa ESC p ke printer yg sama).
-      await bukaLaci();
+      // Opsi 'Buka Laci Saat Cetak' (Pengaturan) — default aktif. Kalau dicentang,
+      // baru kirim pulsa buka laci setelah nota; spooler kadang drop job kedua bila
+      // beruntun langsung, makanya ada jeda supaya printer settle.
+      if(laciCetakAktif()){
+        await new Promise(r=>setTimeout(r,450));
+        await bukaLaci();
+      }
     }catch(e){ showErr('Cetak USB gagal: '+e); }
   }
   // Buka laci kasir via printer (ESC/POS ESC p). Kirim ke printer yg sama dgn
@@ -1417,6 +1431,7 @@
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
     document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
     muatPrinterOpts();  // isi dropdown printer aktif
+    const lac=document.getElementById('setLaciCetak'); if(lac) lac.checked = laciCetakAktif();
     document.getElementById('setModal').classList.add('show');
     setTimeout(()=>document.getElementById('setToken').focus(),60);
   }
@@ -1434,6 +1449,9 @@
   }
   // Pilih printer dari dropdown → simpan ke localStorage utk cetak/buka laci.
   function pilihPrinter(v){ localStorage.setItem('zpos_printer', v||''); }
+  // Opsi buka laci otomatis saat cetak nota (default aktif). Tersimpan di localStorage.
+  function laciCetakAktif(){ return localStorage.getItem('zpos_laci_cetak') !== '0'; }
+  function toggleLaciCetak(on){ localStorage.setItem('zpos_laci_cetak', on?'1':'0'); }
   function tutupSet(){ document.getElementById('setModal').classList.remove('show'); }
 
   // ---- login PIN multiuser (perangkat) ----
