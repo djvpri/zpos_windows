@@ -4,3 +4,4 @@ node_modules/
 harness/shots/
 harness/.fixtures/
 harness/test-results/
+sketches/
