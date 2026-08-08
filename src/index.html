@@ -218,6 +218,7 @@
       <div class="usr" id="kasirPill" title="Kasir aktif — klik untuk ganti" onclick="bukaLogin()"><span class="av" id="kasirAv">?</span><span id="kasirNama"></span></div>
       <div class="sep"></div>
       <div class="act">
+        <div class="ibtn" title="Buka Laci Kasir" onclick="bukaLaci()"><i class="bi bi-safe2"></i></div>
         <div class="ibtn" title="Kosongkan" onclick="clearCart()"><i class="bi bi-trash3"></i></div>
         <div class="ibtn" title="Pengaturan" onclick="openSet()"><i class="bi bi-gear"></i></div>
       </div>
@@ -1107,6 +1108,24 @@
       const msg=await tinv('cetak_escpos',{escpos,nama_printer:printer});
       toast(msg||'Nota terkirim.');
     }catch(e){ showErr('Cetak USB gagal: '+e); }
+  }
+  // Buka laci kasir via printer (ESC/POS ESC p). Kirim ke printer yg sama dgn
+  // cetak nota (localStorage 'zpos_printer'), fallback auto-enum.
+  async function bukaLaci(){
+    if(!zposIsTauri()){ toast('Buka laci hanya di aplikasi Windows.'); return; }
+    let printer=localStorage.getItem('zpos_printer');
+    if(!printer){
+      try{
+        const list=await tinv('daftar_printer');
+        if(!list.length){ showErr('Tidak ada printer terpasang. Pasang driver printer thermal dulu.'); return; }
+        printer=list.find(p=>/rpp|thermal|reciipt|pos|usb/i.test(p))||list[0];
+        localStorage.setItem('zpos_printer',printer);
+      }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
+    }
+    try{
+      const msg=await tinv('buka_laci',{nama_printer:printer});
+      toast(msg||'Laci dibuka.');
+    }catch(e){ showErr('Buka laci gagal: '+e); }
   }
   function cetakNota(){
     if(zposIsTauri()){ cetakSpooler(); return; } // Tauri → direct spooler (Opsi A)

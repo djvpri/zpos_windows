@@ -731,6 +731,60 @@ fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> 
     r
 }
 
+/// Buka laci kasir (cash drawer) via ESC/POS `ESC p` ke printer nama_printer.
+/// Data pulsa: 1B 70 00 19 19 = pin 2, on 50ms, off 50ms (umum utk kasir thermal).
+/// Reuse jalur raw spooler yg sama dgn cetak_escpos (OpenPrinter/WritePrinter).
+#[cfg(windows)]
+#[tauri::command]
+fn buka_laci(nama_printer: String) -> Result<String, String> {
+    use std::os::raw::c_void;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Graphics::Printing::{
+        ClosePrinter, EndDocPrinter, OpenPrinterW, StartDocPrinterW, WritePrinter, DOC_INFO_1W,
+    };
+    use windows::core::PWSTR;
+    use windows::core::w;
+    if nama_printer.trim().is_empty() {
+        return Err("Nama printer kosong.".into());
+    }
+    let name16: Vec<u16> = nama_printer.encode_utf16().chain(Some(0)).collect();
+    let pname = PCWSTR(name16.as_ptr());
+    let mut hprinter: HANDLE = HANDLE::default();
+    unsafe { OpenPrinterW(pname, &mut hprinter, None) }
+        .map_err(|_| format!("Printer \"{nama_printer}\" tidak bisa dibuka — pastikan driver terpasang di Printers & scanners."))?;
+    let r = (|| -> Result<String, String> {
+        let doc = DOC_INFO_1W {
+            pDocName: PWSTR(w!("ZPos laci").as_ptr() as *mut u16),
+            pOutputFile: PWSTR::null(),
+            pDatatype: PWSTR(w!("RAW").as_ptr() as *mut u16),
+        };
+        let job: u32 = unsafe { StartDocPrinterW(hprinter, 1, &doc) };
+        if job == 0 {
+            return Err("StartDocPrinter gagal.".into());
+        }
+        let data: &[u8] = &[0x1B, 0x70, 0x00, 0x19, 0x19]; // ESC p 0 25 25
+        let mut written: u32 = 0;
+        let okw: windows::Win32::Foundation::BOOL = unsafe {
+            WritePrinter(hprinter, data.as_ptr() as *const c_void, data.len() as u32, &mut written)
+        };
+        let _ = unsafe { EndDocPrinter(hprinter) };
+        if !okw.as_bool() {
+            return Err("WritePrinter gagal kirim pulsa laci.".into());
+        }
+        Ok(format!("Laci dibuka lewat {nama_printer}."))
+    })();
+    let _ = unsafe { EndDocPrinter(hprinter) };
+    let _ = unsafe { ClosePrinter(hprinter) };
+    r
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn buka_laci(nama_printer: String) -> Result<String, String> {
+    Err("Buka laci hanya didukung di Windows.".into())
+}
+
 #[cfg(not(windows))]
 #[tauri::command]
 fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> {
@@ -806,7 +860,7 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, nota_temp,
-            daftar_printer, cetak_escpos, ambil_lisensi,
+            daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift
         ])
         .run(tauri::generate_context!())
