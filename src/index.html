@@ -357,6 +357,17 @@
         <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
       </div>
 
+      <!-- Pilih printer aktif utk cetak nota + buka laci (localStorage zpos_printer).
+           Diisi oleh muatPrinterOpts() saat modal dibuka; auto-pick RPP kalau kosong. -->
+      <div class="fld" style="margin-top:10px">
+        <label style="display:flex;justify-content:space-between;align-items:center">
+          <span><i class="bi bi-printer"></i> Printer Aktif</span>
+          <a href="javascript:void(0)" onclick="muatPrinterOpts()" style="font-size:11px;color:#1971c2">refresh</a>
+        </label>
+        <select id="setPrinter" style="width:100%;padding:8px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none;background:#fff" onchange="pilihPrinter(this.value)"></select>
+        <div style="font-size:11px;color:#98a2b3;margin-top:4px">Printer dipakai utk cetak nota &amp; buka laci. Pilih manual atau biarkan otomatis.</div>
+      </div>
+
       <!-- Diagnosa: log error otomatis (dari zpos-errors.log) -->
       <div class="fld" style="margin-top:10px">
         <label style="display:flex;justify-content:space-between;align-items:center">
@@ -367,6 +378,24 @@
           </span>
         </label>
         <pre id="errLog" style="background:#111;color:#7df;font:11px/1.4 monospace;padding:8px;border-radius:6px;min-height:40px;max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0">(kosong)</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal pilih printer (fallback saat cetak/buka laci tak ada printer terpilih) -->
+<div class="modal" id="prModal">
+  <div class="mc" style="max-width:340px">
+    <div class="mch"><span><i class="bi bi-printer"></i> Pilih Printer</span><span class="x" onclick="tutupPrDialog()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div class="fld">
+        <label>Printer utk cetak nota / buka laci</label>
+        <select id="prPick" style="width:100%;padding:8px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none;background:#fff"></select>
+        <div style="font-size:11px;color:#98a2b3;margin-top:4px">Tidak ada pilihan? Periksa driver printer di Windows, lalu klik refresh.</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button style="flex:1;padding:8px;border:1px solid #e2e6ee;background:#fff;color:#5a6577;border-radius:9px;cursor:pointer" onclick="muatPrPick()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button class="sbtn" onclick="pakaiPrPick()" style="flex:1"><i class="bi bi-check2"></i> Gunakan</button>
       </div>
     </div>
   </div>
@@ -1092,18 +1121,25 @@
   }
   // Cetak via spooler: auto-pilih printer. Simpan pilihan di localStorage biar
   // tak perlu enum tiap cetak (config toko belum punya field printer → cukup ini).
+  // Ambil printer aktif utk cetak/buka laci: prioritas localStorage 'zpos_printer',
+  // lalu auto-pick RPP/thermal, kalau kosong/error → buka dialog pilih printer (C).
+  // Return null kalau user membatalkan / belum ada printer.
+  async function ambilPrinterAuto(){
+    let p=localStorage.getItem('zpos_printer');
+    if(!p){
+      try{
+        const list=await tinv('daftar_printer');
+        if(list&&list.length){ p=list.find(x=>/rpp|thermal|reciipt|pos|usb/i.test(x))||list[0]; localStorage.setItem('zpos_printer',p); }
+      }catch(e){ /* turun ke dialog */ }
+    }
+    if(!p) p = await bukaPrDialog();  // user ambil/auto-cancel → null
+    return p;
+  }
   async function cetakSpooler(){
     const n=notaTerakhir; if(!n){ toast('Belum ada transaksi utk dicetak.'); return; }
     const escpos=buildEscPos(n);
-    let printer=localStorage.getItem('zpos_printer');
-    if(!printer){
-      try{
-        const list=await tinv('daftar_printer');
-        if(!list.length){ showErr('Tidak ada printer terpasang di Windows. Pasang driver RPP02N di Printers & scanners.'); return; }
-        printer=list.find(p=>/rpp|thermal|reciipt|pos/i.test(p))||list[0];
-        localStorage.setItem('zpos_printer',printer);
-      }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
-    }
+    const printer=await ambilPrinterAuto();
+    if(!printer){ toast('Printer belum dipilih.'); return; }
     try{
       const msg=await tinv('cetak_escpos',{escpos,namaPrinter:printer});
       toast(msg||'Nota terkirim.');
@@ -1113,20 +1149,39 @@
   // cetak nota (localStorage 'zpos_printer'), fallback auto-enum.
   async function bukaLaci(){
     if(!zposIsTauri()){ toast('Buka laci hanya di aplikasi Windows.'); return; }
-    let printer=localStorage.getItem('zpos_printer');
-    if(!printer){
-      try{
-        const list=await tinv('daftar_printer');
-        if(!list.length){ showErr('Tidak ada printer terpasang. Pasang driver printer thermal dulu.'); return; }
-        printer=list.find(p=>/rpp|thermal|reciipt|pos|usb/i.test(p))||list[0];
-        localStorage.setItem('zpos_printer',printer);
-      }catch(e){ showErr('Gagal enumerasi printer: '+e); return; }
-    }
+    const printer=await ambilPrinterAuto();
+    if(!printer){ toast('Printer belum dipilih.'); return; }
     try{
       const msg=await tinv('buka_laci',{namaPrinter:printer});
       toast(msg||'Laci dibuka.');
     }catch(e){ showErr('Buka laci gagal: '+e); }
   }
+  // Isi select 'prPick' di modal pilih printer (C) dr daftar printer Windows.
+  function muatPrPick(){
+    const sel=document.getElementById('prPick'); if(!sel) return;
+    tinv('daftar_printer').then(list=>{
+      sel.innerHTML = list&&list.length
+        ? list.map(p=>'<option value="'+p.replace(/"/g,'&quot;')+'">'+p+'</option>').join('')
+        : '<option value="">belum ada printer terpasang</option>';
+      if(list&&list.length) sel.value = localStorage.getItem('zpos_printer')||list[0];
+    }).catch(()=>{ sel.innerHTML='<option value="">gagal enumerasi</option>'; });
+  }
+  // Dialog pilih printer (fallback). Resolve nama terpilih → null kalau batal.
+  function bukaPrDialog(){
+    return new Promise((resolve)=>{
+      const sel=document.getElementById('prPick'); if(!sel){ resolve(null); return; }
+      let settle=false;
+      window.__prResolve=(v)=>{ if(settle) return; settle=true; tutupPrDialog(); sel.innerHTML=''; resolve(v); };
+      muatPrPick();
+      document.getElementById('prModal').classList.add('show');
+    });
+  }
+  function pakaiPrPick(){
+    const v=document.getElementById('prPick').value;
+    if(!v){ toast('Tak ada printer terpilih. Periksa driver / pilih dari daftar.'); return; }
+    localStorage.setItem('zpos_printer', v); window.__prResolve&&window.__prResolve(v);
+  }
+  function tutupPrDialog(){ document.getElementById('prModal').classList.remove('show'); window.__prResolve&&window.__prResolve(null); }
   function cetakNota(){
     if(zposIsTauri()){ cetakSpooler(); return; } // Tauri → direct spooler (Opsi A)
     if(!notaTerakhir){ toast('Belum ada transaksi utk dicetak.'); return; }
@@ -1358,9 +1413,24 @@
     refreshErrLog();  // tampilkan log error terbaru saat modal dibuka
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
     document.getElementById('setToken').value = localStorage.getItem('zpos_token') || '';
+    muatPrinterOpts();  // isi dropdown printer aktif
     document.getElementById('setModal').classList.add('show');
     setTimeout(()=>document.getElementById('setToken').focus(),60);
   }
+  // Isi dropdown 'Printer Aktif' di modal setelan dari daftar printer Windows.
+  // Kalau zpos_printer belum dipilih manual, auto-pilih RPP/thermal scr aktif.
+  async function muatPrinterOpts(){
+    const sel=document.getElementById('setPrinter'); if(!sel) return;
+    const cur=localStorage.getItem('zpos_printer');
+    try{
+      const list=await tinv('daftar_printer');
+      sel.innerHTML = '<option value="">(otomatis: RPP/thermal)</option>' +
+        (list&&list.length ? list.map(p=>'<option value="'+p.replace(/"/g,'&quot;')+'">'+p+'</option>').join('') : '<option value="" disabled>belum ada printer terpasang</option>');
+      sel.value = cur || '';
+    }catch(e){ sel.innerHTML='<option value="">(gagal enumerasi: '+e+')</option>'; }
+  }
+  // Pilih printer dari dropdown → simpan ke localStorage utk cetak/buka laci.
+  function pilihPrinter(v){ localStorage.setItem('zpos_printer', v||''); }
   function tutupSet(){ document.getElementById('setModal').classList.remove('show'); }
 
   // ---- login PIN multiuser (perangkat) ----
