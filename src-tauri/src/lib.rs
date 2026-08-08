@@ -338,6 +338,12 @@ struct Lisensi {
     #[serde(default)]
     nama: String,
     #[serde(default)]
+    alamat: String,
+    #[serde(default)]
+    telepon: String,
+    #[serde(default)]
+    catatan_struk: String,
+    #[serde(default)]
     plan: String,
     #[serde(default)]
     aktif: bool,
@@ -393,6 +399,47 @@ fn tutup_shift(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
         Err(e) => submit_log(&app, &format!("shift TUTUP GAGAL user={user_id}: {e}")),
     }
     r
+}
+
+// Saldo kas live utk shift (modal + total_tunai − kas_keluar), dihitung server.
+#[tauri::command]
+fn saldo_shift(state: State<AppState>, base_url: String, shift_id: i64) -> Result<sync::SaldoShift, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    c.saldo_shift(shift_id)
+}
+
+// Catat pengeluaran kas (kas keluar) utk shift aktif kasir → POST /api/kas-keluar.
+#[tauri::command]
+fn kirim_kas_keluar(state: State<AppState>, app: tauri::AppHandle, base_url: String, shift_id: i64, user_id: i64, kategori: String, nominal: i64, catatan: String) -> Result<i64, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.kirim_kas_keluar(shift_id, user_id, &kategori, nominal, &catatan);
+    match &r {
+        Ok(id) => submit_log(&app, &format!("kas keluar shift={shift_id} user={user_id} {kategori} Rp{nominal} → id {id}")),
+        Err(e) => submit_log(&app, &format!("kas keluar GAGAL shift={shift_id}: {e}")),
+    }
+    r
+}
+
+// Daftar pengeluaran kas utk shift → GET /api/kas-keluar?shift_id=...
+#[tauri::command]
+fn daftar_kas_keluar(state: State<AppState>, base_url: String, shift_id: i64) -> Result<Vec<sync::KasKeluar>, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    c.daftar_kas_keluar(shift_id)
 }
 
 // Shift aktif kasir dari cache lokal (`meta.shift_{user_id}`, diisi buka_shift/cek_shift).
@@ -892,7 +939,8 @@ fn run() {
             unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, nota_temp,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
-            buka_shift, tutup_shift, ambil_shift
+            buka_shift, tutup_shift, ambil_shift,
+            saldo_shift, kirim_kas_keluar, daftar_kas_keluar
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

@@ -113,6 +113,39 @@ pub struct ShiftRekap {
     pub total_qris: i64,
     #[serde(default)]
     pub total_transfer: i64,
+    #[serde(default)]
+    pub total_kas_keluar: i64,
+}
+
+// Saldo kas live utk shift (server hitung): modal + total_tunai − kas_keluar.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct SaldoShift {
+    #[serde(default)]
+    pub modal_awal: i64,
+    #[serde(default)]
+    pub total_tunai: i64,
+    #[serde(default)]
+    pub total_kas_keluar: i64,
+    #[serde(default)]
+    pub saldo_kas: i64,
+}
+
+// Satu entri pengeluaran kas.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct KasKeluar {
+    pub id: i64,
+    #[serde(default)]
+    pub shift_id: i64,
+    #[serde(default)]
+    pub kategori: String,
+    #[serde(default)]
+    pub nominal: i64,
+    #[serde(default)]
+    pub catatan: String,
+    #[serde(default)]
+    pub void: i64,
+    #[serde(default)]
+    pub dibuat_at: String,
 }
 
 pub struct SyncClient {
@@ -338,8 +371,30 @@ impl SyncClient {
             langganan_sampai: Option<String>,
         }
         let me: Me = resp.json().map_err(|e| format!("json: {e}"))?;
+        // Data header nota dr `/api/pengaturan` (admin isi di Pengaturan web):
+        // alamat, telepon, catatan_struk. Rollback-friendly: kalau endpoint gagal
+        // (mis role kasir tak berhak / versi lama), tetap simpan yg sudah ada.
+        let mut alamat = String::new();
+        let mut telepon = String::new();
+        let mut catatan_struk = String::new();
+        {
+            let pr = self.http.get(self.endpoint("/api/pengaturan"))
+                .header("Cookie", self.auth_cookie())
+                .send();
+            if let Ok(pre) = pr {
+                if pre.status().is_success() {
+                    #[derive(Deserialize)]
+                    struct Pr { #[serde(default)] alamat: String, #[serde(default)] telepon: String, #[serde(default)] catatan_struk: String }
+                    if let Ok(p) = pre.json::<Pr>() {
+                        alamat = p.alamat; telepon = p.telepon; catatan_struk = p.catatan_struk;
+                    }
+                }
+            }
+        }
         let v = serde_json::json!({
-            "nama": me.nama, "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
+            "nama": me.nama, "alamat": alamat, "telepon": telepon,
+            "catatan_struk": catatan_struk,
+            "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
             "langganan_sampai": me.langganan_sampai,
         }).to_string();
         conn.execute(
@@ -384,6 +439,55 @@ impl SyncClient {
         let r: ShiftRekap = resp.json().map_err(|e| format!("json: {e}"))?;
         let _ = conn.execute("DELETE FROM meta WHERE k=?1", [format!("shift_{user_id}")]);
         Ok(Some(r))
+    }
+
+    // Saldo kas live utk shift: server hitung modal + total_tunai − kas_keluar.
+    // Pakai GET `/api/shift/{id}` (detail rekap). Offline → Err (frontend cache).
+    pub fn saldo_shift(&self, shift_id: i64) -> Result<SaldoShift, String> {
+        let resp = self.http.get(self.endpoint(&format!("/api/shift/{shift_id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)] modal_awal: i64,
+            #[serde(default)] total_tunai: i64,
+            #[serde(default)] total_kas_keluar: i64,
+        }
+        let r: Raw = resp.json().map_err(|e| format!("json: {e}"))?;
+        Ok(SaldoShift {
+            modal_awal: r.modal_awal,
+            total_tunai: r.total_tunai,
+            total_kas_keluar: r.total_kas_keluar,
+            saldo_kas: r.modal_awal + r.total_tunai - r.total_kas_keluar,
+        })
+    }
+
+    // Catat pengeluaran kas (kas keluar) utk shift → POST /api/kas-keluar.
+    // Kasir lokal: user_id = id web kasir yg login; server assign entri ke dia.
+    pub fn kirim_kas_keluar(&self, shift_id: i64, user_id: i64, kategori: &str, nominal: i64, catatan: &str) -> Result<i64, String> {
+        let body = serde_json::json!({
+            "shift_id": shift_id, "user_id": user_id, "kategori": kategori,
+            "nominal": nominal, "catatan": catatan,
+        });
+        let resp = self.http.post(self.endpoint("/api/kas-keluar"))
+            .header("Cookie", self.auth_cookie())
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(Deserialize)]
+        struct New { id: i64 }
+        let m: New = resp.json().map_err(|e| format!("json: {e}"))?;
+        Ok(m.id)
+    }
+
+    // Daftar pengeluaran kas utk shift → GET /api/kas-keluar?shift_id=...
+    pub fn daftar_kas_keluar(&self, shift_id: i64) -> Result<Vec<KasKeluar>, String> {
+        let resp = self.http.get(self.endpoint(&format!("/api/kas-keluar?shift_id={shift_id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.json().map_err(|e| format!("json: {e}"))
     }
 
     // Cek shift aktif kasir dari server → refresh cache lokal. Best-effort.

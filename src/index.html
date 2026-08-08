@@ -215,6 +215,7 @@
     <div class="right">
       <div class="licBadge" id="licBadge" title="Lisensi toko"><i class="bi bi-shield-check"></i><span id="licTxt">—</span></div>
       <div class="licBadge warn" id="shiftBadge" title="Shift kasir" onclick="bukaShiftUI()" style="display:none"><i class="bi bi-clock-history"></i><span id="shiftTxt">Shift</span></div>
+      <div class="licBadge warn" id="kasBadge" title="Saldo kas shift" onclick="bukaKasUI()" style="display:none"><i class="bi bi-cash-coin"></i><span id="kasTxt">Kas</span></div>
       <div class="usr" id="kasirPill" title="Kasir aktif — klik untuk ganti" onclick="bukaLogin()"><span class="av" id="kasirAv">?</span><span id="kasirNama"></span></div>
       <div class="sep"></div>
       <div class="act">
@@ -422,6 +423,34 @@
   </div>
 </div>
 
+<!-- Modal Saldo Kas: saldo live shift + catat pengeluaran (kas keluar) -->
+<div class="modal" id="kasModal">
+  <div class="mc" style="max-width:360px">
+    <div class="mch"><span><i class="bi bi-cash-coin"></i> Saldo Kas</span><span class="x" onclick="tutupKas()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div id="kasSaldo" style="font-size:26px;font-weight:800;color:#111;text-align:center;font-variant-numeric:tabular-nums"></div>
+      <div id="kasRinci" style="font-size:11px;color:#98a2b3;text-align:center;margin-top:4px;margin-bottom:14px"></div>
+
+      <div style="font-size:11px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Kas Keluar / Pengeluaran</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="kkNominal" placeholder="Nominal (Rp)" inputmode="numeric" oninput="this.value=this.value.replace(/\\D/g,'')" style="flex:1;padding:8px 10px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:13px;outline:none" />
+        <select id="kkKategori" style="flex:1;padding:8px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none;background:#fff">
+          <option value="belanja_stok">Belanja stok</option>
+          <option value="operasional">Operasional</option>
+          <option value="gaji">Gaji</option>
+          <option value="transport">Transport</option>
+          <option value="lainnya">Lainnya</option>
+        </select>
+      </div>
+      <input id="kkCatatan" placeholder="Catatan (mis. beli galon)" maxlength="200" onkeydown="if(event.key==='Enter')simpanKas()" style="width:100%;padding:8px 10px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none;margin-bottom:10px" />
+      <button class="sbtn" onclick="simpanKas()" style="width:100%"><i class="bi bi-check2"></i> Simpan Pengeluaran</button>
+
+      <div style="font-size:11px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.4px;margin:16px 0 8px">Riwayat Pengeluaran</div>
+      <div id="kasLog" style="display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Penjualan Lainnya: item/jasa harga bebas (salin fitur ZPos web) -->
 <div class="modal" id="nlModal">
   <div class="mc" style="max-width:400px">
@@ -506,6 +535,9 @@
   let MEMBERS = [];
   let merchantHub = null; // {token, base_url, ...}
   let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
+  // Info toko utk header nota (cached dr `ambil_lisensi`/sync): nama, alamat,
+  // telepon, catatan_struk. Fallback ke teks statis bila belum sinkron.
+  let TOKO_INFO = { nama:'ZPOS KASIR', alamat:'', telepon:'', catatan_struk:'' };
   let SHIFT = null;        // {id, kasir_nama, modal_awal, buka_at, aktif} shift aktif kasir login
 
   const DEMO_PRODUK = [
@@ -1056,6 +1088,8 @@
       offQtn++;
     }
     renderOffQ();
+    // Transaksi tunai menambah saldo laci → refresh badge kas.
+    if(metode==='Tunai' && SHIFT && SHIFT.id) refKas();
     // Simpan data transaksi utk cetak nota (di-baca tombol "Cetak Nota" di overlay).
     // Catatan: TIDAK menyimpan data sensitif — cuma struk (item, harga, total).
     notaTerakhir = { items, subtotal, diskon, total, bayar, kembali,
@@ -1080,8 +1114,9 @@
       return `<div style="display:flex;justify-content:space-between;gap:6px"><span>${nm}</span><span>${toId(i.subtotal)}</span></div>`;
     }).join('');
     return `<div style="font-family:'Consolas','Courier New',monospace;font-size:12px;width:288px;margin:0 auto;color:#111">
-      <div style="text-align:center;font-weight:bold;font-size:14px">ZPOS KASIR</div>
-      <div style="text-align:center;color:#555;font-size:10px;margin-bottom:6px">NOTA / STRUK BELANJA</div>
+      <div style="text-align:center;font-weight:bold;font-size:14px">${esc(TOKO_INFO.nama||'ZPOS KASIR')}</div>
+      ${TOKO_INFO.alamat?`<div style="text-align:center;color:#555;font-size:10px">${esc(TOKO_INFO.alamat)}</div>`:''}
+      ${TOKO_INFO.telepon?`<div style="text-align:center;color:#555;font-size:10px">Telp: ${esc(TOKO_INFO.telepon)}</div>`:''}
       <div style="border-top:1px dashed #000;margin:4px 0"></div>
       <div>No : ${esc(n.noTransaksi)}</div>
       <div>Tgl: ${esc(n.waktu)}</div>
@@ -1096,6 +1131,7 @@
       <div style="display:flex;justify-content:space-between"><span>Bayar</span><span>${toId(n.bayar)}</span></div>
       <div style="display:flex;justify-content:space-between"><span>Kembalian</span><span>${toId(n.kembali)}</span></div>
       <div style="border-top:1px dashed #000;margin:6px 0"></div>
+      ${TOKO_INFO.catatan_struk?`<div style="text-align:center;color:#555;font-size:10px;margin-bottom:4px">${esc(TOKO_INFO.catatan_struk)}</div>`:''}
       <div style="text-align:center;margin-top:6px"><strong>*** TERIMA KASIH ***</strong></div>
     </div>`;
   }
@@ -1112,9 +1148,16 @@
     const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
     const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
     const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
+    // Header toko: nama bold, alamat & telepon center. Panjang > 32 wrap ke baris
+    // berikut (tetap center). Kosong → baris dilewat, tanpa baris sampah kosong.
+    const wrapCenter=s=>{
+      while(s.length>32){ center(s.slice(0,32)); s=s.slice(32); }
+      if(s) center(s);
+    };
     B.push('\x1b@'); // init
-    center('\x1bE\x01ZPOS KASIR\x1bE\x00');
-    center('NOTA / STRUK BELANJA');
+    center('\x1bE\x01'+esc(TOKO_INFO.nama||'ZPOS KASIR')+'\x1bE\x00');
+    wrapCenter(esc(TOKO_INFO.alamat));
+    if(TOKO_INFO.telepon) wrapCenter('Telp: '+esc(TOKO_INFO.telepon));
     line('--------------------------------');
     left('No : '+esc(n.noTransaksi));
     left('Tgl: '+esc(n.waktu));
@@ -1135,6 +1178,7 @@
     totalLine('Bayar', rp(n.bayar));
     totalLine('Kembalian', rp(n.kembali));
     line('--------------------------------');
+    if(TOKO_INFO.catatan_struk) wrapCenter(esc(TOKO_INFO.catatan_struk));
     center('*** TERIMA KASIH ***');
     B.push('\x1ba\x00\n\n\n');
     B.push('\x1dV\x42'); // cut partial
@@ -1299,6 +1343,13 @@
       // Nama toko di-cache bareng lisensi (`/api/auth/me` .nama) → subtitle header.
       const lt=document.getElementById('logoToko');
       if(lt) lt.textContent=(l&&l.nama)?l.nama:'';
+      // Info toko utk header nota (ESC/POS + preview). Ada dr sync `/api/pengaturan`.
+      if(l){
+        TOKO_INFO.nama = l.nama || TOKO_INFO.nama;
+        if(l.alamat!=null) TOKO_INFO.alamat = l.alamat;
+        if(l.telepon!=null) TOKO_INFO.telepon = l.telepon;
+        if(l.catatan_struk!=null) TOKO_INFO.catatan_struk = l.catatan_struk;
+      }
       if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
       let expiredAt=l.langganan_sampai?new Date(l.langganan_sampai.replace(' ','T').replace(/Z$/,'')+'Z').getTime():null;
       if(!expiredAt||isNaN(expiredAt)){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
@@ -1331,7 +1382,82 @@
       badge.className='licBadge '+(s?'ok':'warn');
       badge.title=s?('Shift #'+s.id+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
       txt.textContent=s?('Shift #'+s.id):'Buka Shift';
+      refKas();
     }).catch(()=>{ b.style.display='none'; SHIFT=null; });
+  }
+  // ===== Saldo kas (server hitung: modal + tunai − kas keluar) =====
+  let KAS=null;      // cache saldo shift terakhir (utk badge offline)
+  function refKas(){
+    const b=document.getElementById('kasBadge');
+    if(!b) return;
+    if(!zposIsTauri() || !kasirAktif || !SHIFT || !SHIFT.id){
+      b.style.display='none'; document.getElementById('kasTxt').textContent='Kas'; return;
+    }
+    b.style.display='flex';
+    const txt=document.getElementById('kasTxt');
+    const base=localStorage.getItem('zpos_base')||'';
+    if(!base){ txt.textContent='Kas'; return; }
+    tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+      KAS=k;
+      txt.textContent='Kas '+fmt(k.saldo_kas||0);
+      b.className='licBadge '+(k&&k.saldo_kas<0?'bad':'ok');
+      b.title='Saldo Kas\nModal: '+fmt(k.modal_awal||0)+'\nPenjualan tunai: '+fmt(k.total_tunai||0)+'\nPengeluaran: '+fmt(k.total_kas_keluar||0)+'\nSaldo: '+fmt(k.saldo_kas||0);
+    }).catch(()=>{ txt.textContent='Kas'; });
+  }
+  // Modal saldo kas: tampilkan saldo + rincian + riwayat pengeluaran.
+  function bukaKasUI(){
+    if(!zposIsTauri()){ toast('Mode demo — saldo kas perlu server.'); return; }
+    if(!kasirAktif){ toast('Login kasir dulu.'); return; }
+    if(!SHIFT || !SHIFT.id){ toast('Buka shift dulu utk lihat saldo kas.'); return; }
+    const base=localStorage.getItem('zpos_base');
+    if(!base){ toast('Base URL belum di-set.'); return; }
+    document.getElementById('kkNominal').value='';
+    document.getElementById('kkCatatan').value='';
+    tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+      document.getElementById('kasSaldo').textContent=fmt(k.saldo_kas||0);
+      document.getElementById('kasRinci').textContent='Modal '+fmt(k.modal_awal||0)+' + Tunai '+fmt(k.total_tunai||0)+' − Keluar '+fmt(k.total_kas_keluar||0);
+      isiKasLog();
+      document.getElementById('kasModal').classList.add('show');
+    }).catch(e=>toast('Gagal ambil saldo: '+e));
+  }
+  function tutupKas(){ document.getElementById('kasModal').classList.remove('show'); }
+  const KAT_LABEL={belanja_stok:'Belanja stok',operasional:'Operasional',gaji:'Gaji',transport:'Transport',lainnya:'Lainnya'};
+  function isiKasLog(){
+    const wrap=document.getElementById('kasLog');
+    const base=localStorage.getItem('zpos_base');
+    if(!wrap||!base||!SHIFT) return;
+    tinv('daftar_kas_keluar',{baseUrl:base, shiftId:SHIFT.id}).then(list=>{
+      if(!list||!list.length){ wrap.innerHTML='<div style="font-size:11px;color:#c1c7d0">Belum ada pengeluaran.</div>'; return; }
+      wrap.innerHTML=list.map(k=>{
+        const tgl=fmtTgl(k.dibuat_at);
+        const voidMark=k.void?' <span style="color:#ef4444;font-size:10px">(void)</span>':'';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;background:#f7f8fa;border-radius:8px;padding:7px 10px;font-size:12px">'+
+          '<div style="flex:1;min-width:0"><div style="font-weight:600;color:#111">'+fmt(k.nominal||0)+' '+(KAT_LABEL[k.kategori]||k.kategori||'')+'</div>'+
+          '<div style="color:#98a2b3;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(k.catatan||'-')+' • '+tgl+'</div></div>'+
+          '<span style="color:#98a2b3;font-size:11px">'+fmt(k.nominal||0)+'</span>'+voidMark+'</div>';
+      }).join('');
+    }).catch(()=>{ wrap.innerHTML='<div style="font-size:11px;color:#c1c7d0">Gagal muat riwayat.</div>'; });
+  }
+  // Simpan pengeluaran (kas keluar) → kirim ke server → refresh saldo + log.
+  function simpanKas(){
+    const nominal=parseInt(document.getElementById('kkNominal').value,10);
+    if(!nominal||nominal<=0){ toast('Isi nominal > 0.'); return; }
+    const kategori=document.getElementById('kkKategori').value;
+    const catatan=document.getElementById('kkCatatan').value.trim();
+    const base=localStorage.getItem('zpos_base');
+    if(!base||!SHIFT){ toast('Base URL / shift belum siap.'); return; }
+    tinv('kirim_kas_keluar',{baseUrl:base, shiftId:SHIFT.id, userId:kasirAktif.id, kategori, nominal, catatan}).then(()=>{
+      document.getElementById('kkNominal').value='';
+      document.getElementById('kkCatatan').value='';
+      toast('Pengeluaran Rp '+fmt(nominal)+' dicatat.');
+      refKas();
+      isiKasLog();
+      // refresh saldo di modal
+      return tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+        document.getElementById('kasSaldo').textContent=fmt(k.saldo_kas||0);
+        document.getElementById('kasRinci').textContent='Modal '+fmt(k.modal_awal||0)+' + Tunai '+fmt(k.total_tunai||0)+' − Keluar '+fmt(k.total_kas_keluar||0);
+      });
+    }).catch(e=>toast('Gagal simpan: '+e));
   }
   function fmtTgl(v){ // "2026-08-07T...Z" / trunc
     if(!v) return '-';
