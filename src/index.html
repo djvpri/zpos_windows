@@ -578,7 +578,14 @@
   try { const _s = localStorage.getItem(LS_LAIN); if(_s) PRESET_LAIN = JSON.parse(_s); } catch(e){}
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
-  let bon = [];              // bon gantung {nama, total}
+  let bon = [];              // bon gantung {nama, items, total, vmap, bonId}
+  const LS_BON = 'zpos_bon'; // persist bon lokal (tahan restart app)
+  // Restore bon gantung dari penyimpanan lokal — sebelumnya bon cuma in-memory
+  // (`let bon=[]`), jadi restart app = bon HILANG kalau belum pernah tersync ke server.
+  // Item bon berisi id produk nyata + qty; kalau produk uda berubah (id tak ada lagi
+  // di katalog) item tetap tampil di bon tapi tarik akan kosong — wajar.
+  try { const _s = localStorage.getItem(LS_BON); if(_s) bon = JSON.parse(_s); } catch(e){}
+  function simpanBonStorage(){ try { localStorage.setItem(LS_BON, JSON.stringify(bon)); } catch(e){} }
   let CATS = ['Semua'];            // diisi dinamis dari kategori produk (initKasir)
   let curCat = 'Semua';
   let visN = 15;  // jumlah produk tampil per halaman katalog; loadmore menaikkan
@@ -990,6 +997,7 @@
     const disc=0;
     bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
+    simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
     // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
     // (id>0) — web bon butuh ref produk; item virtual (id negatif) tetap lokal.
     const webProduk = {};
@@ -1021,6 +1029,7 @@
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
     _bonId = b.bonId || 0; // kalau bon pernah terkirim ke server, tandai selesai saat dibayar di windows
     bon.splice(x,1);
+    simpanBonStorage(); // persist setelah tarik
     document.getElementById('bonModal').classList.remove('show');
     toast('Bon ditarik');
     renderCart();
@@ -1033,6 +1042,7 @@
     const x = _bonHapusIdx;
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
     bon.splice(x,1);
+    simpanBonStorage(); // persist setelah hapus
     tutupKonfBon();
     bukaBon();
     renderCart();
