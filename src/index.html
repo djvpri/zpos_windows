@@ -428,6 +428,16 @@
   </div>
 </div>
 
+<!-- Modal Shift: buka (input modal awal) & tutup (konfirmasi) — custom, ganti prompt()/confirm() native -->
+<div class="modal" id="shiftModal">
+  <div class="mc" style="max-width:380px">
+    <div class="mch"><span id="shiftMHead"><i class="bi bi-clock-history"></i> <span id="shiftMTitle">Shift</span></span><span class="x" onclick="tutupShiftModal()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <div id="shiftMBody"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Saldo Kas: saldo live shift + catat pengeluaran (kas keluar) -->
 <div class="modal" id="kasModal">
   <div class="mc" style="max-width:360px">
@@ -1519,29 +1529,65 @@
     const p=x=>('0'+x).slice(-2);
     return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
   }
+  function tutupShiftModal(){ document.getElementById('shiftModal').classList.remove('show'); }
   function bukaShiftUI(){
     if(!zposIsTauri()){ toast('Mode demo — shift perlu server.'); return; }
     if(!kasirAktif){ toast('Login kasir dulu (klik nama kasir di kanan atas).'); return; }
+    const body=document.getElementById('shiftMBody');
     if(SHIFT){
-      // Ada shift aktif → tawarkan tutup
-      if(!confirm('Tutup shift #'+SHIFT.id+' kasir '+kasirAktif.nama+'\n'+SHIFT.kasir_nama+' ?')) return;
-      const base=localStorage.getItem('zpos_base');
-      if(!base){ toast('Base URL belum di-set.'); return; }
-      tinv('tutup_shift',{baseUrl:base,userId:kasirAktif.id,shiftId:SHIFT.id}).then(rk=>{
-        SHIFT=null; refShift();
-        if(rk) tampilRekap(rk); else toast('Shift ditutup.');
-      }).catch(e=>toast('Gagal tutup: '+e));
-      return;
+      // Ada shift aktif → modal konfirmasi tutup (ganti confirm() native)
+      document.getElementById('shiftMTitle').textContent='Tutup Shift #'+SHIFT.id;
+      body.innerHTML =
+        `<div style="text-align:center;padding:6px 0 2px">
+           <div style="width:52px;height:52px;margin:0 auto 10px;border-radius:14px;background:#fef3c7;display:flex;align-items:center;justify-content:center">
+             <i class="bi bi-clock-history" style="font-size:24px;color:#d97706"></i>
+           </div>
+           <div style="font-weight:800;font-size:16px;color:#111">Tutup Shift #${SHIFT.id}?</div>
+           <div style="font-size:13px;color:#5a6577;margin-top:4px">Kasir: <b>${SHIFT.kasir_nama||kasirAktif.nama}</b></div>
+           <div style="font-size:11px;color:#98a2b3;margin-top:2px">${SHIFT.buka_at?('Dibuka '+fmtTgl(SHIFT.buka_at)):''}</div>
+         </div>
+         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+           <button onclick="tutupShiftModal()" style="padding:9px 16px;border:1px solid #e2e6ee;background:#fff;color:#5a6577;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer">Batal</button>
+           <button onclick="konfirmasiTutupShift()" style="padding:9px 16px;border:none;background:#ef4444;color:#fff;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer"><i class="bi bi-check2"></i> Tutup Shift</button>
+         </div>`;
+    } else {
+      // Belum ada shift → modal input modal awal (ganti prompt() native)
+      document.getElementById('shiftMTitle').textContent='Buka Shift';
+      body.innerHTML =
+        `<div style="text-align:center;padding:6px 0 2px">
+           <div style="width:52px;height:52px;margin:0 auto 10px;border-radius:14px;background:#dcfce7;display:flex;align-items:center;justify-content:center">
+             <i class="bi bi-play-fill" style="font-size:26px;color:#15803d"></i>
+           </div>
+           <div style="font-weight:800;font-size:16px;color:#111">Buka Shift</div>
+           <div style="font-size:13px;color:#5a6577;margin-top:4px">Kasir: <b>${kasirAktif.nama}</b></div>
+         </div>
+         <label style="display:block;font-size:11px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.4px;margin:16px 0 6px">Modal awal (Rp)</label>
+         <input id="shiftModalAwal" inputmode="numeric" placeholder="0" value="0" oninput="this.value=this.value.replace(/\\D/g,'')" onkeydown="if(event.key==='Enter')bukaShiftSubmit()" style="width:100%;padding:10px 12px;border:1.5px solid #e2e6ee;border-radius:9px;font-size:15px;font-weight:700;color:#111;outline:none" />
+         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+           <button onclick="tutupShiftModal()" style="padding:9px 16px;border:1px solid #e2e6ee;background:#fff;color:#5a6577;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer">Batal</button>
+           <button onclick="bukaShiftSubmit()" style="padding:9px 16px;border:none;background:#16a34a;color:#fff;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer"><i class="bi bi-play-fill"></i> Buka Shift</button>
+         </div>`;
     }
-    // Belum ada shift → input modal awal via prompt
-    const m=prompt('Modal awal kasir '+kasirAktif.nama+' (Rp):','0');
-    if(m===null) return;
-    const modal=Math.max(0,parseInt(m.replace(/\D/g,''))||0);
+    document.getElementById('shiftModal').classList.add('show');
+  }
+  function bukaShiftSubmit(){
+    const el=document.getElementById('shiftModalAwal');
+    const modal=Math.max(0,parseInt((el?el.value:'').replace(/\D/g,''))||0);
     const base=localStorage.getItem('zpos_base');
     if(!base){ toast('Base URL belum di-set.'); return; }
+    tutupShiftModal();
     tinv('buka_shift',{baseUrl:base,userId:kasirAktif.id,modal}).then(s=>{
       SHIFT=s; refShift(); toast('Shift #'+s.id+' dibuka. Modal '+fmt(s.modal_awal||0));
     }).catch(e=>toast('Gagal buka shift: '+e));
+  }
+  function konfirmasiTutupShift(){
+    const base=localStorage.getItem('zpos_base');
+    if(!base){ toast('Base URL belum di-set.'); return; }
+    tutupShiftModal();
+    tinv('tutup_shift',{baseUrl:base,userId:kasirAktif.id,shiftId:SHIFT.id}).then(rk=>{
+      SHIFT=null; refShift();
+      if(rk) tampilRekap(rk); else toast('Shift ditutup.');
+    }).catch(e=>toast('Gagal tutup: '+e));
   }
   // Simpan rekap shift terakhir utk tombol Cetak ulang (modal `rkModal`).
   let rekapTerakhir = null;
