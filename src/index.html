@@ -1004,7 +1004,11 @@
     cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
     if(zposIsTauri() && Object.keys(webProduk).length){
       const idx = bon.length-1;
-      tinv('kirim_bon',{ nama: member.n, produk: JSON.stringify(webProduk), total: sub-disc })
+      const base = localStorage.getItem('zpos_base') || '';
+      // WAJIB kirim baseUrl: Rust fn kirim_bon butuh arg base_url; kalau nggak,
+      // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
+      // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
+      tinv('kirim_bon',{ baseUrl:base, nama: member.n, produk: JSON.stringify(webProduk), total: sub-disc })
         .then(serverId=>{ bon[idx].bonId=serverId; })
         .catch(()=>{}); // offline → tetap lokal, tak masuk web
     }
