@@ -83,6 +83,8 @@ pub struct RemoteUsersResp {
 pub struct ShiftAktif {
     pub id: i64,
     #[serde(default)]
+    pub nomor_shift: Option<i64>,
+    #[serde(default)]
     pub kasir_nama: String,
     #[serde(default)]
     pub modal_awal: i64,
@@ -95,6 +97,8 @@ pub struct ShiftAktif {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ShiftRekap {
     pub id: i64,
+    #[serde(default)]
+    pub nomor_shift: Option<i64>,
     #[serde(default)]
     pub kasir_nama: String,
     #[serde(default)]

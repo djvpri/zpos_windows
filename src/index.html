@@ -1306,7 +1306,7 @@
     const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
     B.push('\x1b@'); // init
     center('\x1bE\x01REKAP SHIFT\x1bE\x00');
-    center('#'+esc(r.id)+' — '+esc(r.kasir_nama||''));
+    center('#'+esc(r.nomor_shift||r.id)+' — '+esc(r.kasir_nama||''));
     line('--------------------------------');
     left('Buka : '+esc(fmtTgl(r.buka_at)));
     left('Tutup: '+esc(fmtTgl(r.tutup_at)));
@@ -1443,8 +1443,8 @@
       const badge=document.getElementById('shiftBadge'), txt=document.getElementById('shiftTxt');
       badge.style.display='flex';
       badge.className='licBadge '+(s?'ok':'warn');
-      badge.title=s?('Shift #'+s.id+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
-      txt.textContent=s?('Shift #'+s.id):'Buka Shift';
+      badge.title=s?('Shift #'+(s.nomor_shift||s.id)+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
+      txt.textContent=s?('Shift #'+(s.nomor_shift||s.id)):'Buka Shift';
       refKas();
     }).catch(()=>{ b.style.display='none'; SHIFT=null; });
   }
@@ -1536,13 +1536,13 @@
     const body=document.getElementById('shiftMBody');
     if(SHIFT){
       // Ada shift aktif → modal konfirmasi tutup (ganti confirm() native)
-      document.getElementById('shiftMTitle').textContent='Tutup Shift #'+SHIFT.id;
+      document.getElementById('shiftMTitle').textContent='Tutup Shift #'+(SHIFT.nomor_shift||SHIFT.id);
       body.innerHTML =
         `<div style="text-align:center;padding:6px 0 2px">
            <div style="width:52px;height:52px;margin:0 auto 10px;border-radius:14px;background:#fef3c7;display:flex;align-items:center;justify-content:center">
              <i class="bi bi-clock-history" style="font-size:24px;color:#d97706"></i>
            </div>
-           <div style="font-weight:800;font-size:16px;color:#111">Tutup Shift #${SHIFT.id}?</div>
+           <div style="font-weight:800;font-size:16px;color:#111">Tutup Shift #${SHIFT.nomor_shift||SHIFT.id}?</div>
            <div style="font-size:13px;color:#5a6577;margin-top:4px">Kasir: <b>${SHIFT.kasir_nama||kasirAktif.nama}</b></div>
            <div style="font-size:11px;color:#98a2b3;margin-top:2px">${SHIFT.buka_at?('Dibuka '+fmtTgl(SHIFT.buka_at)):''}</div>
          </div>
@@ -1577,7 +1577,7 @@
     if(!base){ toast('Base URL belum di-set.'); return; }
     tutupShiftModal();
     tinv('buka_shift',{baseUrl:base,userId:kasirAktif.id,modal}).then(s=>{
-      SHIFT=s; refShift(); toast('Shift #'+s.id+' dibuka. Modal '+fmt(s.modal_awal||0));
+      SHIFT=s; refShift(); toast('Shift #'+(s.nomor_shift||s.id)+' dibuka. Modal '+fmt(s.modal_awal||0));
     }).catch(e=>toast('Gagal buka shift: '+e));
   }
   function konfirmasiTutupShift(){
@@ -1599,7 +1599,7 @@
     const nl=v=>(Number(v)||0).toLocaleString('id-ID');
     const row=(l,v,bold)=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;${bold?'font-weight:700;color:#111;':''}"><span style="color:#5a6577">${l}</span><span>${v}</span></div>`;
     document.getElementById('rkHead').innerHTML =
-      `<div style="font-weight:700;color:#111;font-size:14px">Shift #${r.id}</div>`+
+      `<div style="font-weight:700;color:#111;font-size:14px">Shift #${r.nomor_shift||r.id}</div>`+
       `<div>Kasir: ${r.kasir_nama||'-'}</div>`+
       `<div style="font-size:11px;color:#98a2b3">${fmtTgl(r.buka_at)} → ${fmtTgl(r.tutup_at)}</div>`;
     const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
