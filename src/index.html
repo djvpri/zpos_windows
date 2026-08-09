@@ -384,6 +384,11 @@
             <a href="javascript:void(0)" onclick="refreshErrLog()" style="font-size:11px;color:#1971c2">refresh</a>
           </span>
         </label>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+          <input id="errLogDir" readonly placeholder="(lokasi log sedang dimuat…)" style="flex:1;padding:7px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:11px;color:#3b4658;outline:none;background:#f8fafc" />
+          <button onclick="pilihLogDir()" style="padding:7px 11px;border:none;border-radius:8px;background:#1971c2;color:#fff;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap"><i class="bi bi-folder2-open"></i> Pilih Folder</button>
+        </div>
+        <div style="font-size:11px;color:#98a2b3;margin-top:4px">zpos-errors.log ditulis ke folder ini. Kosongkan (reset) utk kembali ke folder default.</div>
         <pre id="errLog" style="background:#111;color:#7df;font:11px/1.4 monospace;padding:8px;border-radius:6px;min-height:40px;max-height:160px;overflow:auto;white-space:pre-wrap;margin:6px 0 0">(kosong)</pre>
       </div>
     </div>
@@ -620,6 +625,22 @@
       const path = await tinv('export_log');
       toast('Log tersimpan: '+path.split(/[\\/]/).pop());
     }catch(e){ toast('Export gagal: '+e); }
+  }
+  // Isi input lokasi folder log saat ini (dari command Rust get_log_dir).
+  async function muatLogDir(){
+    const el=document.getElementById('errLogDir'); if(!el) return;
+    try{ el.value = await tinv('get_log_dir'); }catch(e){ el.value = ''; }
+  }
+  // Dialog pilih folder Windows utk lokasi zpos-errors.log; simpan & tampil path.
+  async function pilihLogDir(){
+    if(!zposIsTauri()){ toast('Mode demo'); return; }
+    try{
+      const p = await tinv('pilih_log_dir');
+      if(!p){ return; } // dialog dibatalkan
+      document.getElementById('errLogDir').value = p;
+      toast('Lokasi log: '+p);
+      refreshErrLog(); // log baru setelah ini ditulis ke folder baru
+    }catch(e){ toast('Gagal pilih folder: '+e); }
   }
 
   // Buka DevTools webview (tombol di badge versi). Di browser biasa no-op.
@@ -1633,6 +1654,7 @@
   // (window.prompt diblokir di WebView2 Tauri — makanya pakai modal).
   function openSet(){
     refreshErrLog();  // tampilkan log error terbaru saat modal dibuka
+    muatLogDir();     // isi input lokasi folder log
     document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
     muatPrinterOpts();  // isi dropdown printer aktif
     const lac=document.getElementById('setLaciCetak'); if(lac) lac.checked = laciCetakAktif();

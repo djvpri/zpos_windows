@@ -659,9 +659,45 @@ fn keluar(app: tauri::AppHandle) {
 // path saat setup; `tulis_log` append satu baris, `baca_log` balik baris terakhir.
 // `submit_log` = helper internal yg dipakai command backend (sync) dgn AppHandle,
 // biar jejak error bisa direkam MESKI frontend/JS mati atau error terjadi di Rust.
+// Konfig lokasi log: file `log_dir.txt` di app_data_dir berisi absolute path folder
+// tujuan (kalau mau pindah dari default). Kalau file tak ada / folder tak valid →
+// pakai app_data_dir (bawaan). Ditulis oleh command `pilih_log_dir`.
+const LOG_DIR_FILE: &str = "log_dir.txt";
+
 fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
-    let dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let base = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let cfg = base.join(LOG_DIR_FILE);
+    let dir = std::fs::read_to_string(&cfg)
+        .ok()
+        .map(|s| std::path::PathBuf::from(s.trim()))
+        .filter(|d| d.is_dir())
+        .unwrap_or_else(|| base.clone());
     dir.join("zpos-errors.log")
+}
+
+// Buka dialog pilih folder (Windows native) utk lokasi simpan zpos-errors.log.
+// Simpan pilihan ke log_dir.txt di app_data_dir. Balik path baru utk dipakai UI.
+#[tauri::command]
+fn pilih_log_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let picked = rfd::FileDialog::new()
+        .set_title("Pilih lokasi simpan log error")
+        .pick_folder()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    if picked.is_empty() { return Ok(String::new()); } // user batal → biarkan
+    let cfg = base.join(LOG_DIR_FILE);
+    std::fs::write(&cfg, &picked).map_err(|e| format!("gagal simpan log dir: {e}"))?;
+    Ok(picked)
+}
+
+// Path folder log yang sedang dipakai (utk tampil di input UI). Baca konfig,
+// kalau tak ada → app_data_dir.
+#[tauri::command]
+fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let cfg = base.join(LOG_DIR_FILE);
+    Ok(std::fs::read_to_string(&cfg).map(|s| s.trim().to_string()).unwrap_or_else(|_| base.display().to_string()))
 }
 
 // Tulis satu baris ke zpos-errors.log (app append, timestamp readable).
@@ -972,7 +1008,7 @@ fn run() {
             versi_app,
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,
-            tulis_log, baca_log, export_log, nota_temp,
+            tulis_log, baca_log, export_log, pilih_log_dir, get_log_dir, nota_temp,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift,
             saldo_shift, kirim_kas_keluar, daftar_kas_keluar,
