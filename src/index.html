@@ -1303,7 +1303,7 @@
     const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
     const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
     const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
-    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
+    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0)-(Number(r.total_kas_keluar)||0);
     B.push('\x1b@'); // init
     center('\x1bE\x01REKAP SHIFT\x1bE\x00');
     center('#'+esc(r.nomor_shift||r.id)+' — '+esc(r.kasir_nama||''));
@@ -1317,6 +1317,7 @@
     totalLine('Tunai', rp(r.total_tunai));
     totalLine('QRIS', rp(r.total_qris));
     totalLine('Transfer', rp(r.total_transfer));
+    totalLine('Pengeluaran', rp(r.total_kas_keluar));
     line('--------------------------------');
     totalLine('Kas Akhir', rp(kasAkhir));
     center('*** SELESAI ***');
@@ -1602,7 +1603,7 @@
       `<div style="font-weight:700;color:#111;font-size:14px">Shift #${r.nomor_shift||r.id}</div>`+
       `<div>Kasir: ${r.kasir_nama||'-'}</div>`+
       `<div style="font-size:11px;color:#98a2b3">${fmtTgl(r.buka_at)} → ${fmtTgl(r.tutup_at)}</div>`;
-    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0);
+    const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0)-(Number(r.total_kas_keluar)||0);
     document.getElementById('rkBody').innerHTML =
       `${row('Modal Awal', rp(r.modal_awal))}`+
       `<div style="border-top:1px dashed #e2e6ee;margin:2px 0"></div>`+
@@ -1610,6 +1611,7 @@
       `${row('Tunai', rp(r.total_tunai))}`+
       `${row('QRIS', rp(r.total_qris))}`+
       `${row('Transfer', rp(r.total_transfer))}`+
+      `${row('Pengeluaran', rp(r.total_kas_keluar), r.total_kas_keluar>0)}`+
       `<div style="border-top:1px dashed #e2e6ee;margin:2px 0"></div>`+
       `${row('Kas Akhir (tunai)', rp(kasAkhir), true)}`+
       `<div style="text-align:center;font-size:12px;color:#98a2b3;margin-top:2px">${nl(r.jumlah_transaksi)} transaksi</div>`;
