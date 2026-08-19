@@ -55,21 +55,22 @@ Artifact: `zpos-kasir-release` (berisi exe + setup.exe). Download via
 
 ---
 
-## Sign setup.exe — binary = `cargo-tauri` (BUKAN `cargo tauri`)
+## Sign setup.exe — pakai FLAG `-f/--private-key-path` (path FILE), BUKAN `-k`
 
-Binary signing CLI ada di `~/.cargo/bin/cargo-tauri`. **`cargo tauri` dan
-`cargo-tauri` adalah binary BERBEDA** — yang benar = `cargo-tauri` (versi lama,
-librsass-nya bisa decode key). `cargo tauri` versi baru sering
-`failed to decode base64 key: Invalid symbol ...` walaupun key valid.
+Satu-satunya penyebab `failed to decode base64 key: Invalid symbol ...` = flag
+yang salah: `-k/--private-key` mengharapkan **STRING isi key**, sedangkan kita
+punya **path FILE**. Berikan path ke `-f/--private-key-path` (didukung `cargo
+tauri` maupun `cargo-tauri`, versi 2.11.4 apa pun):
 
 ```bash
-CBIN=$(ls ~/.cargo/bin/cargo-tauri)
-"$CBIN" signer sign \
+cargo tauri signer sign \
   --private-key-path /opt/data/.zpos_updater.key \
   --password "$(cat /opt/data/.zpos_updater_pass)" \
   "/abs/path/ZPos Kasir_<ver>_x64-setup.exe"
 ```
-Output: `<setup>.exe.sig` = **SATU baris base64** (~408–424 B) = nilai `signature`.
+Output: `<setup>.exe.sig` = **SATU baris base64** (~396–424 B) = nilai `signature`.
+Kalau masih `Invalid symbol` setelah pakai `--private-key-path`, itu artinya file
+key rusak/bukan pasangan pubkey — bukan soal flag.
 
 ---
 
