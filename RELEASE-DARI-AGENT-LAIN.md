@@ -15,13 +15,29 @@ baru** — pakai key yang sama dengan rilis sebelumnya (syarat auto-update jalan
    git clone https://github.com/djvpri/zpos_windows.git
    cd zpos_windows && git fetch origin && git checkout main && git pull
    ```
-2. **Private key Tauri** (`/opt/data/.zpos_updater.key`) + password
-   (`/opt/data/.zpos_updater_pass`) HARUS ADA di mesin ini.
-   - Tanpa key → **SKIP sign; hanya bisa build, tak bisa auto-update**.
-   - JANGAN pernah `cargo tauri signer generate` utk bikin key baru — itu membuat
-     `latest.json` signature tak cocok → installed app TAK bisa update dari versi
-     sebelumnya. Key harus IDENTIK lintas semua rilis.
-   - Kalau key tak ada, MINTA ke user / kopi dari tempat penyimpanan.
+2. **Private key Tauri + password** — WAJIB SAMA dengan rilis sebelumnya. Kalau
+   kamu ada di mesin yang pegang key (`/opt/data/.zpos_updater.key` +
+   `/opt/data/.zpos_updater_pass`), pakai langsung. **Kalau TIDAK punya key lokal**:
+   gunakan jalur **CI via Secrets** (di bawah) — key tersimpan di GitHub Secrets,
+   kamu tak perlu file key fisik.
+
+## RILIS CEPAT VIA CI (kamu tak perlu key lokal / komp Windows)
+
+Workflow `.github/workflows/release.yml` (`on: workflow_dispatch`) membangun exe,
+sign dengan secret, upload release — satu trigger:
+```
+curl -sS -X POST -H "Authorization: Bearer <PAT>" -H "Content-Type: application/json" \
+  -d '{"ref":"main","inputs":{"version":"0.1.47"}}' \
+  https://api.github.com/repos/djvpri/zpos_windows/actions/workflows/release.yml/dispatches
+```
+ATAU klik **Actions → release → Run workflow**, isi `version`. Hasil: release `v<version>` + 3 asset (exe, setup.exe, latest.json ber-signature).
+
+**Setup Sekali (owner/Hermes utama, sebelum CI bisa dipakai):** buat GitHub Secrets di repo (Settings → Secrets → Actions):
+- `TAURI_SIGNING_PRIVATE_KEY` = isi file `/opt/data/.zpos_updater.key` (KONTEN, bukan path)
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` = isi `/opt/data/.zpos_updater_pass`
+- `GH_PAT` = PAT GitHub writer (scope `repo`/`release`)
+
+Tanpa 3 secret di atas, workflow release akan gagal di step sign/upload.
 
 ---
 

@@ -1,0 +1,149 @@
+name: release
+
+# Rilis penuh dari satu trigger: build setup.exe + sign pakai GitHub Secrets +
+# bikin latest.json + create/upload GitHub Release. Agent Hermes di komp mana pun
+# cukup `workflow_dispatch` (tak perlu private key lokal — key di Secrets, tak
+# pernah keluar ke runner).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versi yang dirilis, mis. 0.1.47 (tanpa awalan v)'
+        required: true
+        type: string
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ github.workspace }}/signing.key
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # --- Key Tauri ditulis dari secret ke file (hanya selama job; runner di-takedown).
+      # Nilai secret = KONTEN file .key (bukan path). JANGAN pakai -k/--private-key:
+      # itu mengharap string; file memakai -f/--private-key-path.
+      - name: Restore signing key from secret
+        shell: bash
+        run: |
+          printf '%s' "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" > "${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}"
+          ls -la "${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}"
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Install NSIS (bundler butuh makensis)
+        shell: bash
+        run: |
+          choco install nsis -y --no-progress || true
+
+      - name: Build (release + NSIS)
+        working-directory: src-tauri
+        run: cargo tauri build
+
+      # Sign setup.exe. Output: <setup>.exe.sig (satu baris base64) = signature.
+      - name: Sign setup.exe
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          SETUP="$(ls target/release/bundle/nsis/ZPos Kasir_${VERSION}_x64-setup.exe)"
+          echo "signing: $SETUP"
+          cargo tauri signer sign \
+            --private-key-path "${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}" \
+            --password "${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" \
+            "$SETUP"
+          ls -la "$SETUP.sig"
+        env:
+          VERSION: ${{ inputs.version }}
+
+      - name: Build latest.json
+        shell: bash
+        working-directory: src-tauri
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p dist && cd dist
+          cp ../target/release/zpos-kasir.exe .
+          cp "../target/release/bundle/nsis/ZPos Kasir_${VERSION}_x64-setup.exe" .
+          SIG="$(cat "../target/release/bundle/nsis/ZPos Kasir_${VERSION}_x64-setup.exe.sig")"
+          # signature = RAW isi .sig (JANGAN re-encode); url = nama dotted (titik, bukan spasi)
+          python - <<PY
+          import json, datetime, os
+          sig = "$SIG"
+          version = "$VERSION"
+          dotted = "ZPos.Kasir_{}_x64-setup.exe".format(version)
+          assert " " not in dotted
+          man = {
+            "version": version,
+            "notes": "ZPos Kasir v%s" % version,
+            "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platforms": {"windows-x86_64": {
+              "signature": sig,
+              "url": "https://github.com/djvpri/zpos_windows/releases/latest/download/" + dotted
+            }}
+          }
+          open("latest.json", "w").write(json.dumps(man, indent=2))
+          assert "\n" not in sig
+          import base64
+          assert base64.b64decode(sig).decode().startswith("untrusted comment:")
+          print("latest.json OK, sig len", len(sig))
+          PY
+
+      - name: Create or update GitHub release + upload assets
+        shell: bash
+        working-directory: src-tauri/dist
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -e
+          TAG="v$VERSION"
+          API="https://api.github.com/repos/djvpri/zpos_windows"
+          UPLOAD="https://uploads.github.com/repos/djvpri/zpos_windows"
+          # cari release lama tag sama; buat kalau belum ada
+          REL_ID=$(curl -sS -H "Authorization: Bearer $GH_PAT" "$API/releases/tags/$TAG" | python -c "import sys,json;d=json.load(sys.stdin);print(d.get('id',''))")
+          if [ -z "$REL_ID" ]; then
+            REL_ID=$(curl -sS -X POST -H "Authorization: Bearer $GH_PAT" -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\"}" "$API/releases" | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+          fi
+          echo "release id=$REL_ID"
+          # upload nama asli (BERSIMPANG): GitHub render "ZPos Kasir_..." jadi dotted
+          for f in "zpos-kasir.exe" "ZPos Kasir_${VERSION}_x64-setup.exe" "latest.json"; do
+            curl -sS -X POST -H "Authorization: Bearer $GH_PAT" -H "Content-Type: application/json" \
+              --data-binary @"$f" "$UPLOAD/releases/$REL_ID/assets?name=$(basename "$f")" >/dev/null
+            echo "uploaded: $f"
+          done
+          echo "RELEASE_ID=$REL_ID" >> "$GITHUB_ENV"
+
+      - name: Verify release assets
+        shell: bash
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          REL_ID="$RELEASE_ID"
+          echo "verify release $REL_ID assets:"
+          curl -sS -H "Authorization: Bearer $GH_PAT" \
+            "https://api.github.com/repos/djvpri/zpos_windows/releases/$REL_ID/assets" \
+            | python -c "import sys,json;d=json.load(sys.stdin);print([a['name'] for a in d])"
+          curl -sS -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/djvpri/zpos_windows/releases/latest/download/latest.json" \
+            -o live.json -L || true
+          python - <<PY
+          import json
+          v="$VERSION"
+          d=json.load(open("live.json"))
+          assert d["version"]==v, (d.get("version"), v)
+          s=d["platforms"]["windows-x86_64"]["signature"]
+          assert s != "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer"
+          print("latest.json verified: version=%s sig-len=%d"%(v,len(s)))
+          PY
