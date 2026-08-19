@@ -1860,21 +1860,36 @@
   }
 
   let syncing=false;
-  let autoErrShown=false; // cuma log auto-sync error SEKALI sampai next sukses (anti-spam 60s)
+  let autoErrShown=false; // cuma log auto-sync error SEKALI sampai next sukses (anti-spam)
+  // Tarik katalog penuh (sync_remote) jarang — beban berat (875 produk + users)
+  // sekaligus menahan db.lock; push antrian offline ringan dijalankan tiap tick.
+  // Sebelum pull pertama (index.html), lastPull=0 → tick pertama selalu pull penuh.
+  let lastPull=0;
+  const PUSH_MS=60000;  // push offline → server, biar transaksi tunai cepat sampai
+  const PULL_MS=300000; // tarik katalog/member/users, jaga fresh tanpa ngeblokir tiap menit
   // auto-sinkron latar: interval periodik, silent (tanpa toast), guard anti-overlap.
   // cuma jalan kalau kredensial tersimpan; offline (fetch gagal) → skip diam-diam.
   async function autoSync(){
     // Kredensial jwt dipegang Rust (meta token_jwt hasil setup). Cukup butuh base;
-    // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs). Kalau
-    // kita require localStorage zpos_token (yg ga pernah di-set setup) malah tak pernah sync.
+    // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs).
     const base=localStorage.getItem('zpos_base');
     if(!base || syncing || !zposIsTauri()) return;
+    const doPull=Date.now()-lastPull>=PULL_MS;
     syncing=true;
     try{
-      await tinv('sync_remote',{baseUrl:base, token:''});
+      if(doPull){
+        await tinv('sync_remote',{baseUrl:base, token:''});
+        lastPull=Date.now();
+        // Katalog bisa berubah (produk/harga/stok) → re-init penuh hanya saat pull.
+        await initKasir();
+      }else{
+        // Push ringan: antrian offline → server. Tak mengubah katalog lokal, jadi
+        // tak usah initKasir (render berat). Cukup refresh badge kas + antrian.
+        const pushed=await tinv('push_antrian_only',{baseUrl:base, token:''});
+        if(pushed>0){ refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); }
+      }
       autoErrShown=false;      // sukses → reset, error berikutnya bisa tampil lagi
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
-      await initKasir();
     }catch(e){
       offline=true; status();  // gagal → OFFLINE (server tak reachable / kredensial salah)
       // tanpa toast (anti-ganggu saat bayar), tapi tetap kelihatan di devtools / errbar sekali.

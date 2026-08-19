@@ -276,6 +276,24 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, push {n_push}"))
 }
 
+// Push antrian offline saja (tanpa tarik katalog/users). Dipakai siklus
+// frontend pendek biar transaksi offline cepat sampai ke server, sedangkan
+// tarik penuh (sync_remote) bisa dijalankan jarang — menahan db.lock jauh
+// lebih singkat → UI tak blokir lama.
+#[tauri::command]
+fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String) -> Result<usize, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
+    let c = sync::SyncClient::new(base_url.clone(), token);
+    let n = c.push_antrian(conn)?;
+    submit_log(&app, &format!("push_antrian_only OK push={n}"));
+    Ok(n)
+}
+
 // Setup pertama (owner/admin tenant): login email+password sekali → server
 // validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
 // Tak perlu tempel JWT admin manual. Balik "(jumlah user, nama toko)".
@@ -1002,7 +1020,7 @@ fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
-            antri_transaksi, jumlah_antrian, sync_remote, buka_devtools,
+            antri_transaksi, jumlah_antrian, sync_remote, push_antrian_only, buka_devtools,
             list_users, login_pin,
             setup_kasir, tambah_member, list_kategori_member,
             versi_app,
