@@ -1,0 +1,3 @@
+Paste ini ke Hermes di LAPTOP:
+
+"Buka repo zpos_windows (clone dulu: git clone https://github.com/djvpri/zpos_windows kalau belum ada). Baca file release/v0.1.46/INSTRUKSI-HERMES.md, lalu jalankan semua langkahnya untuk menyelesaikan rilis ZPos v0.1.46: generate signature dari setup exe 0.1.46 pakai private key Tauri, isi latest.json dari template, dan upload latest.json ke release GitHub id 372846959. Minta PAT GitHub ke saya kalau butuh, dan cari dulu lokasi private key Tauri di laptop (minta lokasi ke saya kalau tidak ketemu)."
