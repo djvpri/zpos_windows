@@ -1,0 +1,11 @@
+{
+  "version": "0.1.46",
+  "notes": "v0.1.46 — rekap shift tampil Pengeluaran, kas akhir kurangi pengeluaran; logo & icon baru; lag fix push(tarik)",
+  "pub_date": "2026-08-19T07:01:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer",
+      "url": "https://github.com/djvpri/zpos_windows/releases/latest/download/ZPos.Kasir_0.1.46_x64-setup.exe"
+    }
+  }
+}

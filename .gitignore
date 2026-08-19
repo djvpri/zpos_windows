@@ -5,3 +5,6 @@ harness/shots/
 harness/.fixtures/
 harness/test-results/
 sketches/
+
+# latest.json hasil-signature (runtime asset release, jangan commit)
+release/**/latest.json
