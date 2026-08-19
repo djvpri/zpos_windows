@@ -1,0 +1,11 @@
+{
+  "version": "0.1.47",
+  "notes": "v0.1.47 — fix auto-sinkron: peringatan gagal lebih jarang (anti-spam), tak ganggu saat transaksi berjalan",
+  "pub_date": "2026-08-20T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer",
+      "url": "https://github.com/djvpri/zpos_windows/releases/latest/download/ZPos.Kasir_0.1.47_x64-setup.exe"
+    }
+  }
+}
