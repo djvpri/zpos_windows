@@ -1863,6 +1863,8 @@
 
   let syncing=false;
   let autoErrShown=false; // cuma log auto-sync error SEKALI sampai next sukses (anti-spam)
+  let autoFailCount=0;    // beruntun gagal — errBar baru setelah >=2, biar drop singkat tak ganggu
+  let autoRetryMs=10000;  // retry offline bertahap 10s→30s→60s
   // Tarik katalog penuh (sync_remote) jarang — beban berat (875 produk + users)
   // sekaligus menahan db.lock; push antrian offline ringan dijalankan tiap tick.
   // Sebelum pull pertama (index.html), lastPull=0 → tick pertama selalu pull penuh.
@@ -1890,12 +1892,19 @@
         const pushed=await tinv('push_antrian_only',{baseUrl:base, token:''});
         if(pushed>0){ refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); }
       }
-      autoErrShown=false;      // sukses → reset, error berikutnya bisa tampil lagi
+      autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
     }catch(e){
       offline=true; status();  // gagal → OFFLINE (server tak reachable / kredensial salah)
-      // tanpa toast (anti-ganggu saat bayar), tapi tetap kelihatan di devtools / errbar sekali.
-      if(!autoErrShown){ autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e)); }
+      autoFailCount++;
+      if(autoRetryMs<30000) autoRetryMs=30000;
+      else if(autoRetryMs<60000) autoRetryMs=60000;
+      // ErrBar HANYA bila gagal beruntun >=2 DAN kasir tak sedang pegang transaksi
+      // (cart isi). Drop koneksi singkat / gangguan saat bayar tak mutusin jualan.
+      const sibuk=cart.length>0;
+      if(!autoErrShown && autoFailCount>=2 && !sibuk){
+        autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e));
+      }
     }
     finally{ syncing=false; }
   }
@@ -1917,11 +1926,11 @@
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status();
   // Auto-sinkron adaptif via recursive setTimeout (bukan setInterval) supaya
-  // interval bisa berubah mengikuti status: online → 60s, offline → 10s.
-  // Guard `syncing` di dalam autoSync cegah overlap saat request masih jalan.
+  // interval bisa berubah mengikuti status: online → 60s, offline → naik bertahap
+  // (autoRetryMs 10s→30s→60s, kelola di autoSync). Guard `syncing` cegah overlap.
   autoSync();                              // langsung sekali di awal
   (function loop(){
-    setTimeout(async ()=>{ await autoSync(); loop(); }, offline?10000:60000);
+    setTimeout(async ()=>{ await autoSync(); loop(); }, offline?autoRetryMs:60000);
   })();
   // Trigger INSTAN saat browser melaporkan jaringan pulih/putus — tanpa ini,
   // app menunggu interval 60s berikutnya (gap s/d menit) begitu koneksi kembali.
