@@ -22,6 +22,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Guard: versi sejati exe berasal dari src-tauri/Cargo.toml (CARGO_PKG_VERSION).
+      # tauri.conf.json cuma metadata — bump di sana TANPA Cargo.toml menghasilkan exe
+      # yg selalu melaporkan versi lama (bug update-loop 0.1.48). Gagal bila tak sinkron.
+      - name: Assert Cargo.toml version == inputs.version
+        shell: bash
+        run: |
+          CV="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"
+          echo "Cargo.toml version=$CV  inputs.version=${{ inputs.version }}"
+          if [ "$CV" != "${{ inputs.version }}" ]; then
+            echo "::error::Cargo.toml version ($CV) != inputs.version (${{ inputs.version }}). Bump src-tauri/Cargo.toml + tauri.conf.json keduanya sebelum rilis."; exit 1
+          fi
+
       # --- Key Tauri ditulis dari secret ke file (hanya selama job; runner di-takedown).
       # Nilai secret = KONTEN file .key (bukan path). JANGAN pakai -k/--private-key:
       # itu mengharap string; file memakai -f/--private-key-path.
