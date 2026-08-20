@@ -90,6 +90,10 @@ pub struct ShiftAktif {
     pub modal_awal: i64,
     #[serde(default)]
     pub buka_at: String,
+    // Shift lokal offline: dibuka saat tak ada jaringan → id negatif, belum ada di
+    // server. Transaksi/kas keluar di bawahnya disimpan lokal; disinkronkan saat online.
+    #[serde(default)]
+    pub offline: bool,
 }
 
 // Rekap shift setelah tutup (dipakai frontend utk modal rekap).
@@ -423,19 +427,102 @@ impl SyncClient {
     // Buka shift utk kasir lokal (`user_id` = id web user). Token sync = admin,
     // jd server meng-assign shift ke user tsb (admin-only di web POST /api/shift).
     pub fn buka_shift(&self, conn: &mut Connection, user_id: i64, modal: i64) -> Result<ShiftAktif, String> {
-        let resp = self.http.post(self.endpoint("/api/shift"))
+        // Offline (tak bisa hubungi server) → buka shift LOKAL dgn id negatif & flag
+        // offline. Frontend kirim `SHIFT.id` (negatif) utk transaksi/kas keluar di
+        // bawahnya; rekap dihitung dari data lokal saat tutup. Saat online, shift
+        // lokal disinkronkan (posting ke server → id positif).
+        let resp = match self.http.post(self.endpoint("/api/shift"))
             .header("Cookie", self.auth_cookie())
             .json(&serde_json::json!({ "modal_awal": modal, "user_id": user_id }))
-            .send().map_err(|e| format!("network: {e}"))?;
+            .send() {
+            Ok(r) => r,
+            Err(_) => {
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() % 1_000_000).unwrap_or(0) as i64;
+                let lid = -(user_id * 1_000_000 + t);
+                let s = ShiftAktif {
+                    id: lid, nomor_shift: None,
+                    kasir_nama: format!("offline-{user_id}"),
+                    modal_awal: modal, buka_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default()
+                        .as_secs().to_string(),
+                    offline: true,
+                };
+                self.store_shift(conn, user_id, &s)?;
+                conn.execute(
+                    "INSERT INTO meta (k,v) VALUES (?1,'1') ON CONFLICT(k) DO UPDATE SET v='1'",
+                    [format!("shift_offline_{user_id}")],
+                ).map_err(|e| e.to_string())?;
+                return Ok(s);
+            }
+        };
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        let s: ShiftAktif = resp.json().map_err(|e| format!("json: {e}"))?;
+        let mut s: ShiftAktif = resp.json().map_err(|e| format!("json: {e}"))?;
+        s.offline = false;
         self.store_shift(conn, user_id, &s)?;
+        let _ = conn.execute("DELETE FROM meta WHERE k=?1", [format!("shift_offline_{user_id}")]);
         Ok(s)
     }
 
     // Tutup shift → server hitung rekap totals (dipakai modal rekap di frontend).
     // Hapus shift aktif lokal user tsb.
     pub fn tutup_shift(&self, conn: &mut Connection, user_id: i64, shift_id: i64) -> Result<Option<ShiftRekap>, String> {
+        // Shift OFFLINE (id negatif, flag shift_offline) → hitung rekap dari data
+        // LOKAL, tanpa hit server. Transaksi antrian yg punya shift_id==shift_id ini
+        // + kas keluar lokal dijumlahkan. (Atribusi ke shift server saat online
+        // ditangani Fase 2 sync shift — Fase 1 cuma bikin shift+rekap offline jalan.)
+        let is_offline: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE k=?1)",
+            [format!("shift_offline_{user_id}")],
+            |r| r.get::<_, i64>(0),
+        ).unwrap_or(0) == 1;
+        if shift_id < 0 || is_offline {
+            let modal: i64 = conn.query_row(
+                "SELECT COALESCE(json_extract(v,'$.modal_awal'),0) FROM meta WHERE k=?1",
+                [format!("shift_{user_id}")],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            // Rekap dari transaksi antrian yg shift_id-nya == shift lokal ini.
+            let mut total_penjualan = 0i64;
+            let mut total_tunai = 0i64;
+            let mut jumlah = 0i64;
+            {
+                let mut st = conn.prepare("SELECT produk, total, metode FROM antrian").map_err(|e| e.to_string())?;
+                let rows = st.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,Option<String>>(2)?)))
+                    .map_err(|e| e.to_string())?;
+                for row in rows {
+                    let (produk, total, metode) = row.map_err(|e| e.to_string())?;
+                    // hanya transaksi milik shift lokal ini: payload trx.shift_id == shift_id
+                    let sid: Option<i64> = serde_json::from_str::<serde_json::Value>(&produk)
+                        .ok().and_then(|v| v.get("trx").and_then(|t| t.get("shift_id")).and_then(|x| x.as_i64()));
+                    if sid != Some(shift_id) { continue; }
+                    jumlah += 1;
+                    total_penjualan += total;
+                    if metode.as_deref() == Some("Tunai") { total_tunai += total; }
+                }
+            }
+            // Kas keluar lokal shift ini dari meta (dijaga saat kirim_kas_keluar offline).
+            let total_kas_keluar: i64 = conn.query_row(
+                "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
+                [format!("kas_offline_{user_id}_{shift_id}")],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            let r = ShiftRekap {
+                id: shift_id, nomor_shift: None, kasir_nama: format!("offline-{user_id}"),
+                modal_awal: modal,
+                buka_at: conn.query_row(
+                    "SELECT COALESCE(json_extract(v,'$.buka_at'),'') FROM meta WHERE k=?1",
+                    [format!("shift_{user_id}")], |r| r.get(0),
+                ).unwrap_or_default(),
+                tutup_at: String::new(),
+                jumlah_transaksi: jumlah, total_penjualan, total_tunai,
+                total_qris: 0, total_transfer: 0, total_kas_keluar,
+            };
+            let _ = conn.execute("DELETE FROM meta WHERE k IN (?1,?2)", rusqlite::params![
+                format!("shift_{user_id}"), format!("shift_offline_{user_id}"),
+            ]);
+            return Ok(Some(r));
+        }
         let resp = self.http.patch(self.endpoint(&format!("/api/shift/{shift_id}")))
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
@@ -469,15 +556,32 @@ impl SyncClient {
 
     // Catat pengeluaran kas (kas keluar) utk shift → POST /api/kas-keluar.
     // Kasir lokal: user_id = id web kasir yg login; server assign entri ke dia.
-    pub fn kirim_kas_keluar(&self, shift_id: i64, user_id: i64, kategori: &str, nominal: i64, catatan: &str) -> Result<i64, String> {
+    pub fn kirim_kas_keluar(&self, conn: &mut Connection, shift_id: i64, user_id: i64, kategori: &str, nominal: i64, catatan: &str) -> Result<i64, String> {
         let body = serde_json::json!({
             "shift_id": shift_id, "user_id": user_id, "kategori": kategori,
             "nominal": nominal, "catatan": catatan,
         });
-        let resp = self.http.post(self.endpoint("/api/kas-keluar"))
+        let resp = match self.http.post(self.endpoint("/api/kas-keluar"))
             .header("Cookie", self.auth_cookie())
             .json(&body)
-            .send().map_err(|e| format!("network: {e}"))?;
+            .send() {
+            Ok(r) => r,
+            // Offline → simpan total kas keluar lokal utk shift ini (meta menumpuk),
+            // supaya masuk rekap shift offline. Data dikirim ke server di Fase 2.
+            Err(_) => {
+                let key = format!("kas_offline_{user_id}_{shift_id}");
+                let cur: i64 = conn.query_row(
+                    "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
+                    [&key], |r| r.get(0),
+                ).unwrap_or(0);
+                let v = serde_json::json!({ "total": cur + nominal }).to_string();
+                conn.execute(
+                    "INSERT INTO meta (k,v) VALUES (?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                    rusqlite::params![&key, &v],
+                ).map_err(|e| e.to_string())?;
+                return Ok(-(shift_id.abs())); // id placeholder negatif; tak dipakai lanjut
+            }
+        };
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         #[derive(Deserialize)]
         struct New { id: i64 }
@@ -496,6 +600,19 @@ impl SyncClient {
 
     // Cek shift aktif kasir dari server → refresh cache lokal. Best-effort.
     pub fn cek_shift(&self, conn: &mut Connection, user_id: i64) -> Result<Option<ShiftAktif>, String> {
+        // Kalau shift LOKAL OFFLINE masih terbuka, JANGAN timpa/hapus dari server —
+        // server tak tahu shift lokal; sync shift baru dilakukan di Fase 2.
+        let offline_flag: i64 = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE k=?1)",
+            [format!("shift_offline_{user_id}")], |r| r.get(0),
+        ).unwrap_or(0);
+        if offline_flag == 1 {
+            let s: Option<ShiftAktif> = conn.query_row(
+                "SELECT v FROM meta WHERE k=?1", [format!("shift_{user_id}")],
+                |r| r.get::<_, String>(0),
+            ).ok().and_then(|v| serde_json::from_str(&v).ok());
+            return Ok(s);
+        }
         let resp = self.http.get(self.endpoint(&format!("/api/shift/active?user_id={user_id}")))
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;

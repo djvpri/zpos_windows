@@ -1447,8 +1447,8 @@
       const badge=document.getElementById('shiftBadge'), txt=document.getElementById('shiftTxt');
       badge.style.display='flex';
       badge.className='licBadge '+(s?'ok':'warn');
-      badge.title=s?('Shift #'+(s.nomor_shift||s.id)+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
-      txt.textContent=s?('Shift #'+(s.nomor_shift||s.id)):'Buka Shift';
+      badge.title=s?('Shift #'+(s.nomor_shift||s.id)+(s.offline?' (LOKAL/OFFLINE)':'')+' • modal '+fmt(s.modal_awal||0)+' • dibuka '+fmtTgl(s.buka_at)):'Kasir '+kasirAktif.nama+' belum buka shift';
+      txt.textContent=s?('Shift #'+(s.nomor_shift||s.id)+(s.offline?' • offline':'')):'Buka Shift';
       refKas();
     }).catch(()=>{ b.style.display='none'; SHIFT=null; });
   }

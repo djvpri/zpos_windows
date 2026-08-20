@@ -440,7 +440,7 @@ fn kirim_kas_keluar(state: State<AppState>, app: tauri::AppHandle, base_url: Str
         "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
     ).unwrap_or_default();
     let c = sync::SyncClient::new(base_url, meta_tok);
-    let r = c.kirim_kas_keluar(shift_id, user_id, &kategori, nominal, &catatan);
+    let r = c.kirim_kas_keluar(conn, shift_id, user_id, &kategori, nominal, &catatan);
     match &r {
         Ok(id) => submit_log(&app, &format!("kas keluar shift={shift_id} user={user_id} {kategori} Rp{nominal} → id {id}")),
         Err(e) => submit_log(&app, &format!("kas keluar GAGAL shift={shift_id}: {e}")),
