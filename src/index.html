@@ -107,6 +107,9 @@
   /* sudah tersinkron semua — hijau */
   .offq.ok { border-color:#22c55e; color:#1e7d33; background:#f0fbf4; }
   .offq.ok .n { background:#22c55e; }
+  .simBtn { margin-left:auto; padding:6px 14px; border:none; border-radius:8px; background:#4f7cff; color:#fff; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; flex-shrink:0; transition:.12s; }
+  .simBtn:hover { filter:brightness(1.1); }
+  .hidden { display:none !important; }
   /* Bar member */
   .toolrow { display:flex; align-items:center; gap:8px; }
   .member { position:relative; }
@@ -271,7 +274,7 @@
       <button class="payhang" id="payHang" onclick="simpanBon()" disabled title="Gantung transaksi (butuh member)"><i class="bi bi-bookmark-plus"></i> Gantung Bon</button>
       <button class="pay" onclick="bayar()">BAYAR</button>
       <div class="offq" id="offq"><span class="n" id="offqN">0</span><span id="offqTxt">transaksi offline belum tersinkron</span>
-        <span id="simOnline" style="margin-left:auto;font-size:11px;opacity:.7"><i class="bi bi-arrow-repeat"></i> Sinkronkan</span></div>
+        <button type="button" id="simOnline" class="simBtn"><i class="bi bi-arrow-repeat"></i> Sinkronkan</button></div>
     </div>
   </div>
 </div></div>
