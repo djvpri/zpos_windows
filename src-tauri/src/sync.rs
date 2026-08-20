@@ -518,6 +518,31 @@ impl SyncClient {
                 jumlah_transaksi: jumlah, total_penjualan, total_tunai,
                 total_qris: 0, total_transfer: 0, total_kas_keluar,
             };
+            // Catat shift offline utk di-replay ke server saat online (Fase 2):
+            // {old_id, user_id, modal_awal, buka_at}. `tutup_at` server hitung sendiri.
+            let kas_total = total_kas_keluar;
+            let buka_str: String = conn.query_row(
+                "SELECT COALESCE(json_extract(v,'$.buka_at'),'') FROM meta WHERE k=?1",
+                [format!("shift_{user_id}")], |r| r.get(0),
+            ).unwrap_or_default();
+            let mut pending: Vec<serde_json::Value> = conn.query_row(
+                "SELECT COALESCE(v,'[]') FROM meta WHERE k='shift_sync_pending'",
+                [], |r| r.get::<_, String>(0),
+            ).and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e))))
+             .unwrap_or_default();
+            pending.push(serde_json::json!({
+                "user_id": user_id,
+                "old_id": shift_id,
+                "modal_awal": modal,
+                // `buka_at` simpan utk dipakai replay. Kalau berupa epoch detik (Fase 1)
+                // → server butuh ISO; konversi di titik replay (sync_replay_shift).
+                "buka_at": buka_str,
+                "kas_offline": kas_total,
+            }));
+            conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('shift_sync_pending',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [serde_json::to_string(&pending).map_err(|e| e.to_string())?],
+            ).map_err(|e| e.to_string())?;
             let _ = conn.execute("DELETE FROM meta WHERE k IN (?1,?2)", rusqlite::params![
                 format!("shift_{user_id}"), format!("shift_offline_{user_id}"),
             ]);
@@ -699,6 +724,10 @@ impl SyncClient {
     // client_ref di server mencegah duplikat jika request pas tiba saat koneksi
     // terputus (idempotency — cara yang sama dipakai ZPos web).
     pub fn push_antrian(&self, conn: &mut Connection) -> Result<usize, String> {
+        // Replay shift OFFLINE yg ditutup (Fase 2) SEBELUM menaruh transaksi dgn
+        // shift_id negatif, supaya server punya shift dengan id positif utk repoint.
+        self.sync_replay_shift(conn)?;
+
         type Row = (i64, String, String, String, i64, String); // id, client_ref, produk, metode, total, dibuat_at
         let rows: Vec<Row> = {
             let mut st = conn.prepare(
@@ -730,6 +759,104 @@ impl SyncClient {
             }
         }
         Ok(pushed)
+    }
+
+    // Fase 2 — replay shift OFFLINE yg sudah ditutup ke server saat online:
+    // (1) POST /api/shift dgn buka_at asli → dapat id positif server
+    // (2) repoint semua antrian yg punya trx.shift_id==old_id(negatif) -> new_id
+    // (3) kirim kas keluar offline (total) ke shift baru
+    // (4) hapus dari pending + meta kas_offline.
+    // Dipanggil di awal `push_antrian`, SEBELUM transaksi dgn shift_id lama di-push.
+    pub fn sync_replay_shift(&self, conn: &mut Connection) -> Result<usize, String> {
+        let raw: String = conn.query_row(
+            "SELECT COALESCE(v,'[]') FROM meta WHERE k='shift_sync_pending'",
+            [], |r| r.get::<_, String>(0),
+        ).unwrap_or_else(|_| "[]".into());
+        let mut pending: Vec<serde_json::Value> = match serde_json::from_str(&raw) {
+            Ok(v) => v, Err(_) => return Ok(0),
+        };
+        if pending.is_empty() { return Ok(0); }
+
+        let mut kept: Vec<serde_json::Value> = Vec::new();
+        let mut replayed = 0usize;
+        for p in pending {
+            let user_id = p.get("user_id").and_then(|v| v.as_i64());
+            let old_id = p.get("old_id").and_then(|v| v.as_i64());
+            let modal = p.get("modal_awal").and_then(|v| v.as_i64()).unwrap_or(0);
+            let Some(old_id) = old_id else { continue };
+            // buka_at: bisa ISO ("2026-...") atau epoch detik (Fase 1) → konversi.
+            let mut buka_iso = p.get("buka_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if let Ok(secs) = buka_iso.trim().parse::<i64>() {
+                // epoch detik → ISO UTC
+                let d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+                let dt: chrono::DateTime<chrono::Utc> = d.into();
+                buka_iso = dt.to_rfc3339();
+            }
+            let body = serde_json::json!({
+                "modal_awal": modal,
+                "user_id": user_id,
+                "buka_at": if buka_iso.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(buka_iso) },
+            });
+            let resp = match self.http.post(self.endpoint("/api/shift"))
+                .header("Cookie", self.auth_cookie())
+                .json(&body)
+                .send() {
+                Ok(r) => r, Err(_) => { kept.push(p); continue; } // offline kembali, tahan
+            };
+            if !resp.status().is_success() { kept.push(p); continue; }
+            #[derive(serde::Deserialize)]
+            struct NewShift { id: i64 }
+            let Ok(ns) = resp.json::<NewShift>() else { kept.push(p); continue; };
+            let new_id = ns.id;
+
+            // Repoint antrian: trx.shift_id old_id(neg) -> new_id.
+            let rows: Vec<(i64, String)> = {
+                let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
+                let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
+            };
+            for (aid, produk) in rows {
+                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&produk) {
+                    if let Some(sid) = v.get("trx").and_then(|t| t.get("shift_id")).and_then(|x| x.as_i64()) {
+                        if sid == old_id {
+                            v["trx"]["shift_id"] = serde_json::json!(new_id);
+                            let s = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+                            conn.execute("UPDATE antrian SET produk=?1 WHERE id=?2", rusqlite::params![s, aid])
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+
+            // Kirim kas keluar offline (total) ke shift baru. Bisa multiple kas keluar
+            // di shift yg sama; di-share utk user & old shift. `user_id` blok:
+            if let Some(uid) = user_id {
+                let kk_key = format!("kas_offline_{uid}_{old_id}");
+                let kk_total: i64 = conn.query_row(
+                    "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
+                    [&kk_key], |r| r.get(0),
+                ).unwrap_or(0);
+                if kk_total > 0 {
+                    // Kirim sbg satu entri "Pengeluaran offline" (Fase 1 hanya simpan total,
+                    // tak ada kategori/catatan per-entri — ponytail: rincikan nanti).
+                    let kb = serde_json::json!({ "shift_id": new_id, "user_id": uid,
+                        "kategori": "Lainnya", "nominal": kk_total, "catatan": "Pengeluaran offline" });
+                    if let Ok(r2) = self.http.post(self.endpoint("/api/kas-keluar"))
+                        .header("Cookie", self.auth_cookie()).json(&kb).send() {
+                        if r2.status().is_success() {
+                            let _ = conn.execute("DELETE FROM meta WHERE k=?1", [&kk_key]);
+                        }
+                    }
+                }
+            }
+            replayed += 1;
+        }
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES ('shift_sync_pending',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            [serde_json::to_string(&kept).map_err(|e| e.to_string())?],
+        ).map_err(|e| e.to_string())?;
+        Ok(replayed)
     }
 
     /// Simpan bon gantung ke server (`/api/bon`) supaya tampil di Laporan web.
