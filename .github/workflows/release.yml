@@ -129,24 +129,31 @@ jobs:
 
       - name: Verify release assets
         shell: bash
+        working-directory: src-tauri/dist
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           VERSION: ${{ inputs.version }}
         run: |
           REL_ID="$RELEASE_ID"
           echo "verify release $REL_ID assets:"
-          curl -sS -H "Authorization: Bearer $GH_PAT" \
+          # nama asset di release (harus 3, dari file yg barusan ku upload)
+          NAMES=$(curl -sS -H "Authorization: Bearer $GH_PAT" \
             "https://api.github.com/repos/djvpri/zpos_windows/releases/$REL_ID/assets" \
-            | python -c "import sys,json;d=json.load(sys.stdin);print([a['name'] for a in d])"
-          curl -sS -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
-            "https://api.github.com/repos/djvpri/zpos_windows/releases/latest/download/latest.json" \
-            -o live.json -L || true
+            | python -c "import sys,json;print(' '.join(a['name'] for a in json.load(sys.stdin)))")
+          echo "assets: $NAMES"
+          for want in "zpos-kasir.exe" "latest.json"; do
+            case " $NAMES " in *" $want "*) ;; *) echo "MISSING: $want"; exit 1;; esac
+          done
+          # setup exe (dotted di GitHub) harus ada
+          case " $NAMES " in *"ZPos.Kasir_${VERSION}_x64-setup.exe"*) ;; *) echo "MISSING setup"; exit 1;; esac
+          # validasi latest.json LOCAL (yg ku upload) — tak andalkan CDN eventual-consistency
           python - <<PY
           import json
           v="$VERSION"
-          d=json.load(open("live.json"))
+          d=json.load(open("latest.json"))
           assert d["version"]==v, (d.get("version"), v)
           s=d["platforms"]["windows-x86_64"]["signature"]
-          assert s != "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer"
-          print("latest.json verified: version=%s sig-len=%d"%(v,len(s)))
+          assert s and s != "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer"
+          assert d["platforms"]["windows-x86_64"]["url"].endswith("ZPos.Kasir_%s_x64-setup.exe" % v)
+          print("latest.json verified: version=%s sig-len=%d" % (v, len(s)))
           PY
