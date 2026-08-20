@@ -118,8 +118,11 @@ jobs:
           echo "release id=$REL_ID"
           # upload nama asli (BERSIMPANG): GitHub render "ZPos Kasir_..." jadi dotted
           for f in "zpos-kasir.exe" "ZPos Kasir_${VERSION}_x64-setup.exe" "latest.json"; do
-            curl -sS -X POST -H "Authorization: Bearer $GH_PAT" -H "Content-Type: application/json" \
-              --data-binary @"$f" "$UPLOAD/releases/$REL_ID/assets?name=$(basename "$f")" >/dev/null
+            NAME=$(basename "$f")
+            # URL-encode spasi utk query param name (file setup punya spasi).
+            NAME_ENC="${NAME// /%20}"
+            curl -sS -X POST -H "Authorization: Bearer "$GH_PAT" -H "Content-Type: application/json" \
+              --data-binary @"$f" "$UPLOAD/releases/$REL_ID/assets?name=$NAME_ENC" >/dev/null
             echo "uploaded: $f"
           done
           echo "RELEASE_ID=$REL_ID" >> "$GITHUB_ENV"
