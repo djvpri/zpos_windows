@@ -601,13 +601,24 @@ fn unduh_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
                     last_err = format!("server balas HTTP {}", resp.status());
                 } else {
                     match resp.bytes() {
-                        Ok(bytes) if bytes.len() >= 100_000 => {
-                            if std::fs::write(&tmp, &bytes).is_err() { last_err = "tulis file gagal".into(); }
-                            else if std::fs::rename(&tmp, &target).is_err() && !target.exists() {
-                                last_err = "atur ulang nama gagal".into();
-                            } else { return Ok(target.to_string_lossy().into()); }
+                        Ok(bytes) => {
+                            // Validasi exe: minimal 1MB + header `MZ` (PE). Kalau bukan exe
+                            // yg sah, jangan ditimpa — updater tadi tak mengganti exe lama
+                            // (& file kecil/rusak akan relaunch exe gagal → versi balik lama).
+                            let ok_size = bytes.len() >= 1_000_000;
+                            let ok_mz = bytes.len() >= 2 && bytes[0] == b'M' && bytes[1] == b'Z';
+                            if ok_size && ok_mz {
+                                if std::fs::write(&tmp, &bytes).is_err() { last_err = "tulis file gagal".into(); }
+                                else if std::fs::rename(&tmp, &target).is_err() && !target.exists() {
+                                    last_err = "atur ulang nama gagal".into();
+                                } else {
+                                    let _ = submit_log(&app, &format!("unduh OK {} byte", bytes.len()));
+                                    return Ok(target.to_string_lossy().into());
+                                }
+                            } else {
+                                last_err = format!("file unduhan bukan exe utuh ({} byte, mz={ok_mz})", bytes.len());
+                            }
                         }
-                        Ok(bytes) => last_err = format!("file unduhan mencurigakan kecil ({})", bytes.len()),
                         Err(e) => last_err = format!("baca response gagal: {e}"),
                     }
                 }
@@ -642,19 +653,32 @@ fn terapkan_update(app: tauri::AppHandle, payload: Value) -> Result<(), String> 
     let versi_baru = p.get("versiBaru").or_else(|| p.get("versi_baru"))
         .and_then(|v| v.as_str()).ok_or("missing required key versiBaru")?;
     let me = std::env::current_exe().map_err(|e| format!("path exe gagal: {e}"))?;
-    let me_s = me.to_string_lossy().replace('/', "\\");
-    let new_s = target_path.replace('/', "\\");
+    let me_s = me.to_string_lossy().replace('/', "\\\\");
+    let new_s = target_path.replace('/', "\\\\");
+    let status_file = std::env::current_exe().ok()
+        .and_then(|m| m.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("zpos-swap-status.txt");
+    let status_s = status_file.to_string_lossy().replace('/', "\\\\");
     // Loop retry: exe lama TAK bisa dihapus selama app masih berjalan (terkunci
     // Windows). `timeout 2` kaku tak cukup — teardown Tauri bisa lebih lama.
     // Tunggu sampai `del` berhasil (app benar2 keluar) baru move + relaunch.
+    // `echo result > status_file` dicatat utk diagnosa bila relaunch tak pernah
+    // naik versi — perlu dibedakan "move ok" vs "move gagal".
     let script = format!(
-        "timeout /t 1 /nobreak >nul
-:retry
-del /f /q {me} 2>nul
-if exist {me} ( timeout /t 1 /nobreak >nul & goto retry )
-move /y {new} {me} >nul
-start \"\" {me}",
-        me = format!("\"{}\"", me_s), new = format!("\"{}\"", new_s)
+        "timeout /t 1 /nobreak >nul\n\
+:retry\n\
+del /f /q {me} 2>nul\n\
+if exist {me} ( timeout /t 1 /nobreak >nul & goto retry )\n\
+move /y {new} {me} >nul\n\
+if exist {me} (\n\
+  echo moved-ok>{status}\n\
+  start \"\" {me}\n\
+) else (\n\
+  echo move-FAIL>{status}\n\
+)\n",
+        me = format!("\"{}\"", me_s), new = format!("\"{}\"", new_s),
+        status = format!("\"{}\"", status_s),
     );
     let _ = submit_log(&app, &format!("menerapkan update ke {}", versi_baru));
     // spawn tanpa .wait() → detach. Setelah app.exit(), cmd tunggu exe terlepas

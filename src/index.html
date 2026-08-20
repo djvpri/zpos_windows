@@ -1706,7 +1706,9 @@
         logErr('UPDT','unduh v'+latest+' siap');
         toast('Update '+latest+' terunduh — aplikasi akan restart');
         await tinv('terapkan_update',{payload:{targetPath:path, versiBaru:latest}});
-        setTimeout(()=>tinv('keluar').catch(()=>{}), 400);
+        // Jeda 1.5s biar cmd sempat memulai del-loop exe sebelum app exit. Terlalu
+        // cepat bisa bikin race (exe masih kunci saat move) → versi tetap lama.
+        setTimeout(()=>tinv('keluar').catch(()=>{}), 1500);
       }
     }catch(e){
       showErr('Update gagal: '+e);
