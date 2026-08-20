@@ -1024,6 +1024,23 @@ fn run() {
             submit_log(handle, &format!(
                 "START versi={} data_dir={}", env!("CARGO_PKG_VERSION"), dir.display()
             ));
+            // Jejak FORENSIK exe yg berjalan: path absolut + ukuran + timestamp file.
+            // Dipakai utk diagnosa "update tak naik versi" — bandingkan dgn asset rilis.
+            // Kalau product version file ≠ versi string, atau path di luar folder instal,
+            // itu bukti exe yg dijalankan bukan yg di-install.
+            if let Ok(me) = std::env::current_exe() {
+                let meta = std::fs::metadata(&me).ok();
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                let mtime = meta.as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        use std::time::UNIX_EPOCH;
+                        t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+                    }).unwrap_or(0);
+                submit_log(handle, &format!(
+                    "EXE path={} size={} mtime={}", me.display(), size, mtime
+                ));
+            }
             let conn = match Connection::open(&path) {
                 Ok(c) => { submit_log(handle, "DB open OK"); c }
                 Err(e) => {
