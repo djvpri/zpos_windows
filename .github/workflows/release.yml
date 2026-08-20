@@ -55,7 +55,7 @@ jobs:
         shell: bash
         working-directory: src-tauri
         run: |
-          SETUP="$(ls target/release/bundle/nsis/ZPos Kasir_${VERSION}_x64-setup.exe)"
+          SETUP="$(ls "target/release/bundle/nsis/ZPos Kasir_${VERSION}_x64-setup.exe")"
           echo "signing: $SETUP"
           cargo tauri signer sign \
             --private-key-path "${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}" \
