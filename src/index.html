@@ -1907,12 +1907,15 @@
       autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
     }catch(e){
-      offline=true; status();  // gagal → OFFLINE (server tak reachable / kredensial salah)
       autoFailCount++;
       if(autoRetryMs<30000) autoRetryMs=30000;
       else if(autoRetryMs<60000) autoRetryMs=60000;
+      // Flip status OFFLINE hanya setelah >=2 gagal beruntun — drop singkat
+      // (WiFi hiccup) tak bikin badge berkedip offline↔online. Event `offline`
+      // browser tetap flip instan (jaringan memang putus; lihat listener bawah).
       // ErrBar HANYA bila gagal beruntun >=2 DAN kasir tak sedang pegang transaksi
       // (cart isi). Drop koneksi singkat / gangguan saat bayar tak mutusin jualan.
+      if(autoFailCount>=2){ offline=true; status(); }
       const sibuk=cart.length>0;
       if(!autoErrShown && autoFailCount>=2 && !sibuk){
         autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e));
