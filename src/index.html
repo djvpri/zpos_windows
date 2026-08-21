@@ -1469,7 +1469,14 @@
       txt.textContent='Kas '+fmt(k.saldo_kas||0);
       b.className='licBadge '+(k&&k.saldo_kas<0?'bad':'ok');
       b.title='Saldo Kas\nModal: '+fmt(k.modal_awal||0)+'\nPenjualan tunai: '+fmt(k.total_tunai||0)+'\nPengeluaran: '+fmt(k.total_kas_keluar||0)+'\nSaldo: '+fmt(k.saldo_kas||0);
-    }).catch(()=>{ txt.textContent='Kas'; });
+    }).catch(()=>{
+      // Offline → tampil saldo cache terakhir (kalau ada), bukan kosong.
+      if(KAS && KAS.saldo_kas!==undefined){
+        txt.textContent='Kas '+fmt(KAS.saldo_kas||0)+' (offline)';
+        b.className='licBadge '+(KAS.saldo_kas<0?'bad':'ok');
+        b.title='Saldo Kas (offline, mungkin kedaluwarsa)';
+      }else{ txt.textContent='Kas'; }
+    });
   }
   // Modal saldo kas: tampilkan saldo + rincian + riwayat pengeluaran.
   function bukaKasUI(){

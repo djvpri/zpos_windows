@@ -501,12 +501,20 @@ impl SyncClient {
                     if metode.as_deref() == Some("Tunai") { total_tunai += total; }
                 }
             }
-            // Kas keluar lokal shift ini dari meta (dijaga saat kirim_kas_keluar offline).
-            let total_kas_keluar: i64 = conn.query_row(
-                "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
-                [format!("kas_offline_{user_id}_{shift_id}")],
-                |r| r.get(0),
-            ).unwrap_or(0);
+            // Kas keluar lokal shift ini dari meta (array entri per-item offline).
+            let total_kas_keluar: i64 = {
+                let kk_key = format!("kas_offline_{user_id}_{shift_id}");
+                let arr: Vec<Value> = conn.query_row(
+                    "SELECT COALESCE(v,'[]') FROM meta WHERE k=?1",
+                    [&kk_key], |r| r.get::<_, String>(0),
+                ).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+                // Kompat data lama (objek {"total":N}) → per-entri.
+                let arr: Vec<Value> =
+                    if arr.len() == 1 && arr[0].get("total").is_some() {
+                        vec![serde_json::json!({ "nominal": arr[0].get("total").and_then(|x| x.as_i64()).unwrap_or(0) })]
+                    } else { arr };
+                arr.iter().filter_map(|e| e.get("nominal").and_then(|x| x.as_i64())).sum()
+            };
             let r = ShiftRekap {
                 id: shift_id, nomor_shift: None, kasir_nama: format!("offline-{user_id}"),
                 modal_awal: modal,
@@ -591,20 +599,25 @@ impl SyncClient {
             .json(&body)
             .send() {
             Ok(r) => r,
-            // Offline → simpan total kas keluar lokal utk shift ini (meta menumpuk),
-            // supaya masuk rekap shift offline. Data dikirim ke server di Fase 2.
             Err(_) => {
-                let key = format!("kas_offline_{user_id}_{shift_id}");
-                let cur: i64 = conn.query_row(
-                    "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
-                    [&key], |r| r.get(0),
-                ).unwrap_or(0);
-                let v = serde_json::json!({ "total": cur + nominal }).to_string();
-                conn.execute(
-                    "INSERT INTO meta (k,v) VALUES (?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-                    rusqlite::params![&key, &v],
-                ).map_err(|e| e.to_string())?;
-                return Ok(-(shift_id.abs())); // id placeholder negatif; tak dipakai lanjut
+            // Offline → simpan entri per-item (kategori/nominal/catatan) utk shift ini
+            // di meta (JSON array), supaya rekap shift offline akurat & saat online
+            // di-replay per-entri (kategori/catatan asli tak hilang di laporan).
+            let key = format!("kas_offline_{user_id}_{shift_id}");
+            let cur: Vec<Value> = conn.query_row(
+                "SELECT COALESCE(v,'[]') FROM meta WHERE k=?1",
+                [&key], |r| r.get::<_, String>(0),
+            ).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+            let mut arr = cur;
+            arr.push(serde_json::json!({
+                "kategori": kategori, "nominal": nominal, "catatan": catatan,
+            }));
+            let arr_str = serde_json::to_string(&arr).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO meta (k,v) VALUES (?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                rusqlite::params![&key, &arr_str],
+            ).map_err(|e| e.to_string())?;
+            return Ok(-(shift_id.abs())); // id placeholder negatif; tak dipakai lanjut
             }
         };
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
@@ -782,81 +795,125 @@ impl SyncClient {
         for p in pending {
             let user_id = p.get("user_id").and_then(|v| v.as_i64());
             let old_id = p.get("old_id").and_then(|v| v.as_i64());
-            let modal = p.get("modal_awal").and_then(|v| v.as_i64()).unwrap_or(0);
             let Some(old_id) = old_id else { continue };
-            // buka_at: bisa ISO ("2026-...") atau epoch detik (Fase 1) → konversi.
-            let mut buka_iso = p.get("buka_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if let Ok(secs) = buka_iso.trim().parse::<i64>() {
-                // epoch detik → ISO UTC
-                let d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
-                let dt: chrono::DateTime<chrono::Utc> = d.into();
-                buka_iso = dt.to_rfc3339();
-            }
-            let body = serde_json::json!({
-                "modal_awal": modal,
-                "user_id": user_id,
-                "buka_at": if buka_iso.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(buka_iso) },
-            });
-            let resp = match self.http.post(self.endpoint("/api/shift"))
-                .header("Cookie", self.auth_cookie())
-                .json(&body)
-                .send() {
-                Ok(r) => r, Err(_) => { kept.push(p); continue; } // offline kembali, tahan
-            };
-            if !resp.status().is_success() { kept.push(p); continue; }
-            #[derive(serde::Deserialize)]
-            struct NewShift { id: i64 }
-            let Ok(ns) = resp.json::<NewShift>() else { kept.push(p); continue; };
-            let new_id = ns.id;
+            let mut item = p;
+            let modal = item.get("modal_awal").and_then(|v| v.as_i64()).unwrap_or(0);
+            // Isolasi borrow: baca new_id dulu, baru bisa mutate `item` di arm None.
+            let prev_new_id = item.get("new_id").and_then(|v| v.as_i64());
 
-            // Repoint antrian: trx.shift_id old_id(neg) -> new_id.
-            let rows: Vec<(i64, String)> = {
-                let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
-                let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
-                    .map_err(|e| e.to_string())?;
-                iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
-            };
-            for (aid, produk) in rows {
-                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&produk) {
-                    if let Some(sid) = v.get("trx").and_then(|t| t.get("shift_id")).and_then(|x| x.as_i64()) {
-                        if sid == old_id {
-                            v["trx"]["shift_id"] = serde_json::json!(new_id);
-                            let s = serde_json::to_string(&v).map_err(|e| e.to_string())?;
-                            conn.execute("UPDATE antrian SET produk=?1 WHERE id=?2", rusqlite::params![s, aid])
-                                .map_err(|e| e.to_string())?;
+            // Kalau shift SUDAH dibuat (new_id tersimpan dari replay sebelumnya) →
+            // jangan POST ulang (cegah duplikat shift server); cukup kirim sisa
+            // kas keluar offline yang belum sempat terkirim.
+            let new_id: i64 = match prev_new_id {
+                Some(id) => id,
+                None => {
+                    // buka_at: bisa ISO ("2026-...") atau epoch detik (Fase 1) → konversi.
+                    let mut buka_iso = item.get("buka_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if let Ok(secs) = buka_iso.trim().parse::<i64>() {
+                        let d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+                        let dt: chrono::DateTime<chrono::Utc> = d.into();
+                        buka_iso = dt.to_rfc3339();
+                    }
+                    let body = serde_json::json!({
+                        "modal_awal": modal,
+                        "user_id": user_id,
+                        "buka_at": if buka_iso.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(buka_iso) },
+                    });
+                    let resp = match self.http.post(self.endpoint("/api/shift"))
+                        .header("Cookie", self.auth_cookie())
+                        .json(&body)
+                        .send() {
+                        Ok(r) => r, Err(_) => { kept.push(item); continue; } // offline kembali, tahan
+                    };
+                    if !resp.status().is_success() { kept.push(item); continue; }
+                    #[derive(serde::Deserialize)]
+                    struct NewShift { id: i64 }
+                    let Ok(ns) = resp.json::<NewShift>() else { kept.push(item); continue; };
+                    let id = ns.id;
+
+                    // Repoint antrian: trx.shift_id old_id(neg) -> new_id.
+                    let rows: Vec<(i64, String)> = {
+                        let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
+                        let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+                            .map_err(|e| e.to_string())?;
+                        iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
+                    };
+                    for (aid, produk) in rows {
+                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&produk) {
+                            if let Some(sid) = v.get("trx").and_then(|t| t.get("shift_id")).and_then(|x| x.as_i64()) {
+                                if sid == old_id {
+                                    v["trx"]["shift_id"] = serde_json::json!(id);
+                                    let s = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+                                    conn.execute("UPDATE antrian SET produk=?1 WHERE id=?2", rusqlite::params![s, aid])
+                                        .map_err(|e| e.to_string())?;
+                                }
+                            }
                         }
                     }
+                    item["new_id"] = serde_json::json!(id);
+                    id
                 }
-            }
+            };
 
-            // Kirim kas keluar offline (total) ke shift baru. Bisa multiple kas keluar
-            // di shift yg sama; di-share utk user & old shift. `user_id` blok:
-            if let Some(uid) = user_id {
-                let kk_key = format!("kas_offline_{uid}_{old_id}");
-                let kk_total: i64 = conn.query_row(
-                    "SELECT COALESCE(json_extract(v,'$.total'),0) FROM meta WHERE k=?1",
-                    [&kk_key], |r| r.get(0),
-                ).unwrap_or(0);
-                if kk_total > 0 {
-                    // Kirim sbg satu entri "Pengeluaran offline" (Fase 1 hanya simpan total,
-                    // tak ada kategori/catatan per-entri — ponytail: rincikan nanti).
-                    let kb = serde_json::json!({ "shift_id": new_id, "user_id": uid,
-                        "kategori": "Lainnya", "nominal": kk_total, "catatan": "Pengeluaran offline" });
-                    if let Ok(r2) = self.http.post(self.endpoint("/api/kas-keluar"))
-                        .header("Cookie", self.auth_cookie()).json(&kb).send() {
-                        if r2.status().is_success() {
-                            let _ = conn.execute("DELETE FROM meta WHERE k=?1", [&kk_key]);
-                        }
-                    }
-                }
-            }
-            replayed += 1;
+            // Kirim kas keluar offline PER-ENTRI (kategori/catatan asli) ke shift baru.
+            // done=true → semua terkirim (atau tak ada) → shift selesai.
+            // done=false → masih ada entri gagal → retain item (dgn new_id) utk retry.
+            let done = self.kirim_kas_keluar_offline(conn, user_id, old_id, new_id)?;
+            if done { replayed += 1; } else { kept.push(item); }
         }
         conn.execute(
             "INSERT INTO meta (k,v) VALUES ('shift_sync_pending',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
             [serde_json::to_string(&kept).map_err(|e| e.to_string())?],
         ).map_err(|e| e.to_string())?;
         Ok(replayed)
+    }
+
+    // Kirim kas keluar offline shift (array entri per-item) yg tersimpan di meta ke
+    // shift server `new_id`. Entri sukses dihapus; kalau masih ada yg gagal (mis.
+    // jaringan putus) array dipertahankan & method return false → shift item ditahan
+    // utk retry. Ini juga cegah data kas keluar hilang dari server saat koneksi turun
+    // di tengah replay (edge: shift sudah dibikin, kas keluar belum terkirim).
+    fn kirim_kas_keluar_offline(&self, conn: &mut Connection, user_id: Option<i64>, old_id: i64, new_id: i64) -> Result<bool, String> {
+        let Some(uid) = user_id else { return Ok(true); };
+        let kk_key = format!("kas_offline_{uid}_{old_id}");
+        let arr: Vec<serde_json::Value> = conn.query_row(
+            "SELECT COALESCE(v,'[]') FROM meta WHERE k=?1",
+            [&kk_key], |r| r.get::<_, String>(0),
+        ).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        // Kompat: data lama (Fase 1) berbentuk objek {"total":N} → ubah jadi array
+        // per-entri satu baris "Pengeluaran offline" biar tercatat (nominal tak hilang).
+        let arr: Vec<serde_json::Value> = if arr.len() == 1 && arr[0].get("total").is_some() {
+            let total = arr[0].get("total").and_then(|x| x.as_i64()).unwrap_or(0);
+            vec![serde_json::json!({ "kategori": "Lainnya", "nominal": total, "catatan": "Pengeluaran offline" })]
+        } else { arr };
+        if arr.is_empty() { return Ok(true); }
+        let mut remaining: Vec<serde_json::Value> = Vec::new();
+        for e in arr {
+            let kategori = e.get("kategori").and_then(|x| x.as_str()).unwrap_or("Lainnya").to_string();
+            let nominal = e.get("nominal").and_then(|x| x.as_i64()).unwrap_or(0);
+            let catatan = e.get("catatan").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let kb = serde_json::json!({
+                "shift_id": new_id, "user_id": uid,
+                "kategori": kategori, "nominal": nominal, "catatan": catatan,
+            });
+            let sent = match self.http.post(self.endpoint("/api/kas-keluar"))
+                .header("Cookie", self.auth_cookie()).json(&kb).send() {
+                Ok(r) => r.status().is_success(),
+                Err(_) => false,
+            };
+            if !sent { remaining.push(e); }
+        }
+        if remaining.is_empty() {
+            let _ = conn.execute("DELETE FROM meta WHERE k=?1", [&kk_key]);
+            Ok(true)
+        } else {
+            let rem_str = serde_json::to_string(&remaining).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO meta (k,v) VALUES (?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                rusqlite::params![&kk_key, &rem_str],
+            ).map_err(|e| e.to_string())?;
+            Ok(false)
+        }
     }
 
     /// Simpan bon gantung ke server (`/api/bon`) supaya tampil di Laporan web.
