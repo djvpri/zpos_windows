@@ -1463,8 +1463,13 @@
     b.style.display='flex';
     const txt=document.getElementById('kasTxt');
     const base=localStorage.getItem('zpos_base')||'';
-    if(!base){ txt.textContent='Kas'; return; }
-    tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+    // Shift offline → saldo dihitung dari SQLite lokal (modal + tunai antrian − kas
+    // keluar), biar badge kas tetap kelihatan walau server tak bisa dihubungi.
+    const p = SHIFT.offline
+      ? tinv('saldo_shift_offline',{userId:kasirAktif.id, shiftId:SHIFT.id})
+      : (function(){ if(!base){ txt.textContent='Kas'; return Promise.reject(); }
+          return tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}); })();
+    p.then(k=>{
       KAS=k;
       txt.textContent='Kas '+fmt(k.saldo_kas||0);
       b.className='licBadge '+(k&&k.saldo_kas<0?'bad':'ok');
@@ -1487,7 +1492,12 @@
     if(!base){ toast('Base URL belum di-set.'); return; }
     document.getElementById('kkNominal').value='';
     document.getElementById('kkCatatan').value='';
-    tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+    // Shift offline → saldo dihitung dari SQLite lokal (tak perlu server);
+    // riwayat pengeluaran offline tetap bisa dibaca dari meta kas_offline_*.
+    const fetcher = SHIFT.offline
+      ? tinv('saldo_shift_offline',{userId:kasirAktif.id, shiftId:SHIFT.id})
+      : tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id});
+    fetcher.then(k=>{
       document.getElementById('kasSaldo').textContent=fmt(k.saldo_kas||0);
       document.getElementById('kasRinci').textContent='Modal '+fmt(k.modal_awal||0)+' + Tunai '+fmt(k.total_tunai||0)+' − Keluar '+fmt(k.total_kas_keluar||0);
       isiKasLog();
@@ -1526,8 +1536,11 @@
       toast('Pengeluaran Rp '+fmt(nominal)+' dicatat.');
       refKas();
       isiKasLog();
-      // refresh saldo di modal
-      return tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id}).then(k=>{
+      // refresh saldo di modal (offline → hitung lokal)
+      const fre = SHIFT.offline
+        ? tinv('saldo_shift_offline',{userId:kasirAktif.id, shiftId:SHIFT.id})
+        : tinv('saldo_shift',{baseUrl:base, shiftId:SHIFT.id});
+      return fre.then(k=>{
         document.getElementById('kasSaldo').textContent=fmt(k.saldo_kas||0);
         document.getElementById('kasRinci').textContent='Modal '+fmt(k.modal_awal||0)+' + Tunai '+fmt(k.total_tunai||0)+' − Keluar '+fmt(k.total_kas_keluar||0);
       });

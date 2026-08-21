@@ -431,6 +431,18 @@ fn saldo_shift(state: State<AppState>, base_url: String, shift_id: i64) -> Resul
     c.saldo_shift(shift_id)
 }
 
+// Saldo kas live utk shift offline (id negatif): hitung dari SQLite lokal, bukan server.
+#[tauri::command]
+fn saldo_shift_offline(state: State<AppState>, user_id: i64, shift_id: i64) -> Result<sync::SaldoShift, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(String::new(), meta_tok);
+    c.saldo_shift_offline(conn, user_id, shift_id)
+}
+
 // Catat pengeluaran kas (kas keluar) utk shift aktif kasir → POST /api/kas-keluar.
 #[tauri::command]
 fn kirim_kas_keluar(state: State<AppState>, app: tauri::AppHandle, base_url: String, shift_id: i64, user_id: i64, kategori: String, nominal: i64, catatan: String) -> Result<i64, String> {
@@ -1070,7 +1082,7 @@ fn run() {
             tulis_log, baca_log, export_log, pilih_log_dir, get_log_dir, nota_temp,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift,
-            saldo_shift, kirim_kas_keluar, daftar_kas_keluar,
+            saldo_shift, saldo_shift_offline, kirim_kas_keluar, daftar_kas_keluar,
             kirim_bon, tandai_bon
         ])
         .run(tauri::generate_context!())

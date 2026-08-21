@@ -587,6 +587,48 @@ impl SyncClient {
         })
     }
 
+    // Saldo kas live utk shift OFFLINE (id negatif): hitung dari data LOKAL (SQLite)
+    // — modal_awal (meta shift_{user}) + tunai (antrian trx.shift_id==shift_id) −
+    // kas keluar (meta kas_offline_{user}_{shift}). Biar badge/modal saldo tetap
+    // kelihatan saat buka shift offline, bukan cuma bergantung cache server `saldo_shift`.
+    pub fn saldo_shift_offline(&self, conn: &mut Connection, user_id: i64, shift_id: i64) -> Result<SaldoShift, String> {
+        let modal: i64 = conn.query_row(
+            "SELECT COALESCE(json_extract(v,'$.modal_awal'),0) FROM meta WHERE k=?1",
+            [format!("shift_{user_id}")],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        let mut total_tunai = 0i64;
+        {
+            let mut st = conn.prepare("SELECT produk, total, metode FROM antrian").map_err(|e| e.to_string())?;
+            let rows = st.query_map([], |r| Ok((r.get::<_,String>(0)?, r.get::<_,i64>(1)?, r.get::<_,Option<String>>(2)?)))
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                let (produk, total, metode) = row.map_err(|e| e.to_string())?;
+                if metode.as_deref() != Some("Tunai") { continue; }
+                let sid: Option<i64> = serde_json::from_str::<serde_json::Value>(&produk)
+                    .ok().and_then(|v| v.get("trx").and_then(|t| t.get("shift_id")).and_then(|x| x.as_i64()));
+                if sid != Some(shift_id) { continue; }
+                total_tunai += total;
+            }
+        }
+        let kk_key = format!("kas_offline_{user_id}_{shift_id}");
+        let arr: Vec<Value> = conn.query_row(
+            "SELECT COALESCE(v,'[]') FROM meta WHERE k=?1",
+            [&kk_key], |r| r.get::<_, String>(0),
+        ).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let arr: Vec<Value> =
+            if arr.len() == 1 && arr[0].get("total").is_some() {
+                vec![serde_json::json!({ "nominal": arr[0].get("total").and_then(|x| x.as_i64()).unwrap_or(0) })]
+            } else { arr };
+        let total_kas_keluar: i64 = arr.iter().filter_map(|e| e.get("nominal").and_then(|x| x.as_i64())).sum();
+        Ok(SaldoShift {
+            modal_awal: modal,
+            total_tunai,
+            total_kas_keluar,
+            saldo_kas: modal + total_tunai - total_kas_keluar,
+        })
+    }
+
     // Catat pengeluaran kas (kas keluar) utk shift → POST /api/kas-keluar.
     // Kasir lokal: user_id = id web kasir yg login; server assign entri ke dia.
     pub fn kirim_kas_keluar(&self, conn: &mut Connection, shift_id: i64, user_id: i64, kategori: &str, nominal: i64, catatan: &str) -> Result<i64, String> {
