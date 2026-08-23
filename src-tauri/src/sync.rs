@@ -162,6 +162,10 @@ pub struct SyncClient {
     // blocking: sync_remote dijalankan Tauri di worker thread (command non-async),
     // jadi tak ada guard Mutex tersangkut lintas `.await` → future tetap Send.
     http: reqwest::blocking::Client,
+    // Client timeout PENDEK (3s) utk aksi optimistik berbalas-cepat: tandai_bon &
+    // hapus_bon. `http` (10s) utk sync berat (pull katalog/member antrian). Pisah
+    // supaya hapus/tandai bon di kasir nggak nunggu 10s saat web lambat.
+    http_fast: reqwest::blocking::Client,
 }
 
 impl SyncClient {
@@ -176,7 +180,11 @@ impl SyncClient {
             .timeout(std::time::Duration::from_secs(10))  // total per-request = deteksi offline cepat
             .build()
             .expect("build sync http client");
-        Self { base, token, http }
+        let http_fast = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .expect("build sync http_fast client");
+        Self { base, token, http, http_fast }
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -1003,7 +1011,7 @@ impl SyncClient {
     /// Tandai bon selesai (dibayar) di server (`PATCH /api/bon/{id}`) biar tak
     /// mengambang aktif di tab Bon web saat bayar lewat windows.
     pub fn tandai_bon_selesai(&self, bon_id: i64) -> Result<(), String> {
-        let resp = self.http.patch(self.endpoint(&format!("/api/bon/{bon_id}")))
+        let resp = self.http_fast.patch(self.endpoint(&format!("/api/bon/{bon_id}")))
             .header("Cookie", self.auth_cookie())
             .json(&serde_json::json!({ "selesai": true }))
             .send().map_err(|e| format!("network: {e}"))?;
@@ -1019,7 +1027,7 @@ impl SyncClient {
     /// menghapus bon yang pernah terkirim (bonId>0) supaya tak mengambang di web.
     /// 404 = bon uda dihapus dari web → anggap tak masalah.
     pub fn hapus_bon(&self, bon_id: i64) -> Result<(), String> {
-        let resp = self.http.delete(self.endpoint(&format!("/api/bon/{bon_id}")))
+        let resp = self.http_fast.delete(self.endpoint(&format!("/api/bon/{bon_id}")))
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if resp.status().is_success() || resp.status().as_u16() == 404 {

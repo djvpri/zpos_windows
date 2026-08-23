@@ -1124,14 +1124,19 @@
     const pernahTerkirim = !!(b.bonId && b.bonId>0);
     if(_tarikBon === b){ _tarikBon=null; _bonId=0; } // hapus bon yg lagi ditarik → bersihkan ref
     if(pernahTerkirim && zposIsTauri()){
-      // Online-path: hapus lokal HANYA saat web ACK (mirip lunasPending). Bon di-hold
-      // stok di web, jadi hapus = barang balik → stok kembali. Gagal (offline) → flag
-      // hapusPending di-retry otomatis di retryHapusBon (anti bon mengambang web).
-      b.hapusPending=true; simpanBonStorage();
+      // OPTIMISTIC: hapus lokal seketika (UI kilat), kirim hapus_bon background.
+      // RPC hapus_bon pakai http_fast (timeout 3s) → online balas cepat. Gagal
+      // (web lambat/offline) → ROLLBACK: bon di-re-insert + hapusPending, retry
+      // otomatis di retryHapusBon (anti bon mengambang web + stok hold macet).
+      bon.splice(x,1); simpanBonStorage(); renderBonList();
       const base=localStorage.getItem('zpos_base')||'';
       tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId})
-        .then(()=>{ b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1); simpanBonStorage(); renderBonList(); const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:''; })
-        .catch(()=>{ if(b.bonId) toast('Hapus bon ditunda — retry saat online.'); });
+        .catch(()=>{
+          // rollback (hanya bila bon itu tak uda muncul lagi): kembalikan ke daftar + retry
+          if(bon.some(o=>o.bonId===b.bonId)) return;
+          b.hapusPending=true; bon.push(b); simpanBonStorage(); renderBonList();
+          toast('Hapus bon ditunda — retry saat online.');
+        });
     } else {
       // Bon offline (belum ada bonId di web) / non-tauri → hapus lokal langsung.
       bon.splice(x,1);

@@ -1,6 +1,6 @@
 [package]
 name = "zpos-kasir"
-version = "0.1.69"
+version = "0.1.70"
 description = "Z1 Pos — cashier desktop offline-first (Tauri + SQLite)"
 edition = "2021"
 
