@@ -507,6 +507,24 @@ fn tandai_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, b
     r
 }
 
+// Hapus bon permanen di server (dipanggil saat kasir menghapus bon yang pernah
+// terkirim, bonId>0) → DELETE /api/bon/{id}. Biar tak mengambang di tab Bon web.
+#[tauri::command]
+fn hapus_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64) -> Result<(), String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.hapus_bon(bon_id);
+    match &r {
+        Ok(()) => submit_log(&app, &format!("bon #{bon_id} dihapus dari server")),
+        Err(e) => submit_log(&app, &format!("hapus bon #{bon_id} GAGAL: {e}")),
+    }
+    r
+}
+
 // Shift aktif kasir dari cache lokal (`meta.shift_{user_id}`, diisi buka_shift/cek_shift).
 // Offline-safe; dipakai frontend utk banner + kirim shift_id di prosesBayar.
 #[tauri::command]
@@ -1083,7 +1101,7 @@ fn run() {
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
             buka_shift, tutup_shift, ambil_shift,
             saldo_shift, saldo_shift_offline, kirim_kas_keluar, daftar_kas_keluar,
-            kirim_bon, tandai_bon
+            kirim_bon, tandai_bon, hapus_bon
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");

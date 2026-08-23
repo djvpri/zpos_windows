@@ -1110,8 +1110,16 @@
   function konfirmasiHapusBon() {
     const x = _bonHapusIdx;
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
+    const pernahTerkirim = !!(bon[x].bonId && bon[x].bonId>0);
+    const bid = bon[x].bonId||0;
     bon.splice(x,1);
     simpanBonStorage(); // persist setelah hapus
+    // Bon yang pernah terkirim ke web (bonId>0) → hapus juga di server biar tak
+    // mengambang di tab Bon web. Best-effort; gagal (offline) → biarkan utk saat lain.
+    if(pernahTerkirim && zposIsTauri()){
+      const base=localStorage.getItem('zpos_base')||'';
+      tinv('hapus_bon',{baseUrl:base, bon_id:bid}).catch(()=>{});
+    }
     tutupKonfBon();
     bukaBon();
     renderCart();
@@ -1954,6 +1962,22 @@
   const PULL_MS=300000; // tarik katalog/member/users, jaga fresh tanpa ngeblokir tiap menit
   // auto-sinkron latar: interval periodik, silent (tanpa toast), guard anti-overlap.
   // cuma jalan kalau kredensial tersimpan; offline (fetch gagal) → skip diam-diam.
+  // Kirim ulang bon gantung yang dibuat saat OFFLINE (bonId belum ter-set) ke
+  // server. Dipanggil tiap autoSync sukses. Item virtual (id<0) tak bisa & dilewati.
+  async function replayBonServer(){
+    if(!zposIsTauri()) return;
+    const base=localStorage.getItem('zpos_base'); if(!base) return;
+    for(const b of bon){
+      if(b.bonId>0) continue; // sudah terkirim ke server
+      const webProduk={};
+      if(b.items) b.items.forEach(it=>{ if(it.id>0) webProduk[it.id]=(webProduk[it.id]||0)+it.q; });
+      if(!Object.keys(webProduk).length) continue; // semua item virtual → tak bisa
+      try{
+        const id=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk:JSON.stringify(webProduk), total:b.total||0 });
+        b.bonId=id; simpanBonStorage();
+      }catch(e){} // offline lagi / gagal → biarkan retry siklus berikutnya
+    }
+  }
   async function autoSync(){
     // Kredensial jwt dipegang Rust (meta token_jwt hasil setup). Cukup butuh base;
     // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs).
@@ -1975,6 +1999,7 @@
       }
       autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
+      await replayBonServer(); // kirim bon gantung offline yang belum masuk web
     }catch(e){
       autoFailCount++;
       if(autoRetryMs<30000) autoRetryMs=30000;

@@ -992,4 +992,18 @@ impl SyncClient {
             Err(format!("tutup bon {}: {}", bon_id, self.err_detail(resp)))
         }
     }
+
+    /// Hapus bon permanen di server (`DELETE /api/bon/{id}`). Dipakai saat kasir
+    /// menghapus bon yang pernah terkirim (bonId>0) supaya tak mengambang di web.
+    /// 404 = bon uda dihapus dari web → anggap tak masalah.
+    pub fn hapus_bon(&self, bon_id: i64) -> Result<(), String> {
+        let resp = self.http.delete(self.endpoint(&format!("/api/bon/{bon_id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if resp.status().is_success() || resp.status().as_u16() == 404 {
+            Ok(())
+        } else {
+            Err(format!("hapus bon {}: {}", bon_id, self.err_detail(resp)))
+        }
+    }
 }
