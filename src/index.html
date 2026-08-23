@@ -1237,6 +1237,24 @@
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
         .then(async ()=>{
           offQtn++; renderOffQ();
+          // LOG & OPTIMISTIC DECREMENT stok lokal: display kasir dari SQLite lokal
+          // yg cuma update saat pull (5m) — makanya stok "harus refresh dulu" & bisa
+          // tampak basi (awal 10, beli 1, sisa 8 = display lama). Kurangi PRODUK[].s
+          // SEKARANG supaya UI instan akurat & log sebelum/sesudah utk diagnosa.
+          // KECUALI tebus bon (_tarikBon): stok sudah di-hold saat gantung, tebus
+          // tak kurangi lagi. Log dua-duanya biar pola double-decrement ketahuan.
+          try{
+            const isTebus = !!( _tarikBon && _tarikBon.bonId>0 );
+            const nonBon = !isTebus;
+            const stokInfo = items.map(it=>{
+              const p=PRODUK.find(x=>x.id===Number(it.produk_id));
+              const sebelum = p?p.s:null;
+              if(p && nonBon){ p.s = Math.max(0, p.s - Number(it.qty)); }
+              return `id${it.produk_id}:${sebelum==null?'?':sebelum}->${nonBon?(p?p.s:'?') : 'hold'}(q${it.qty})`;
+            }).join(' ');
+            logErr('STOK', `trx ${noTransaksi} tebus=${isTebus?1:0} :: ${stokInfo}`);
+            if(nonBon) render();
+          }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('STOK','optimistic decrement gagal '+noTransaksi+' | '+String(m)); }
           // Bon yang ditarik & kini LUNAS → tandai selesai web & baru hapus LOKAL
           // SAAT web ACK. Kalau `tandai_bon` gagal (offline), bon TETAP di daftar
           // dengan flag lunasPending=true → di-cegah tarik ulang (anti pembayaran
