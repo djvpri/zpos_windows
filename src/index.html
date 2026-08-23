@@ -355,19 +355,14 @@
     <div class="mcb">
       <div class="fld"><label>Base URL server Z1 Pos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
 
-      <!-- Jalur setup pertama: login email+password admin tenant → server
-           validasi & tarik daftar staff (auto-gen PIN utk yg belum punya).
-           Ganti cara lama yg minta tempel JWT admin manual. -->
+      <!-- Setup toko (email admin) DIPERLUKAN hanya saat pertama / belum pernah
+           setup (belum ada lisensi/token). Setelah itu cukup tombol Simpan & Sinkron. -->
       <div class="fld" style="margin-top:8px">
         <label><i class="bi bi-person-gear"></i> Setup toko (email admin)</label>
         <input id="setUser" placeholder="email admin toko (mis. pemilik@toko)" style="margin-bottom:6px" />
         <input id="setPass" type="password" placeholder="password akun" />
-        <button class="sbtn" id="setSetupBtn" style="margin-top:6px">Setup & Tarik Karyawan</button>
-      </div>
-
-      <!-- Sinkron ulang dengan kredensial yang sudah tersimpan (dari Setup email). -->
-      <div class="fld" style="margin-top:10px">
-        <button class="sbtn" id="setBtn">Simpan & Sinkron</button>
+        <div id="setHint" class="hint" style="margin-top:4px;font-size:12px;color:#8895a7"></div>
+        <button class="sbtn" id="setBtn" style="margin-top:6px">Simpan &amp; Sinkron</button>
       </div>
 
       <!-- Pilih printer aktif utk cetak nota + buka laci (localStorage zpos_printer).
@@ -1819,6 +1814,14 @@
     muatPrinterOpts();  // isi dropdown printer aktif
     const lac=document.getElementById('setLaciCetak'); if(lac) lac.checked = laciCetakAktif();
     document.getElementById('setModal').classList.add('show');
+    // Hint status setup: sudah pernah setup → cukup tekan tombol; belum → isi email+pass.
+    const h=document.getElementById('setHint'); if(h){
+      tinv('ambil_lisensi').then(l=>{
+        h.textContent = l
+          ? 'Sudah setup. Tekan "Simpan & Sinkron" utk ambil update terbaru (tanpa isi ulang).'
+          : 'Belum setup. Isi email & password admin (menarik karyawan + PIN).';
+      }).catch(()=>{ if(h) h.textContent=''; });
+    }
     setTimeout(()=>document.getElementById('setUser').focus(),60);
   }
   // Isi dropdown 'Printer Aktif' di modal setelan dari daftar printer Windows.
@@ -1903,48 +1906,43 @@
   }
   document.getElementById('loginModal')?.addEventListener('click',e=>{ if(e.target.id==='loginModal' && kasirAktif) tutupLogin(); });
 
-  function saveSet(){
-    const base=document.getElementById('setUrl').value.trim();
-    if(!base){ toast('Base URL wajib diisi'); return; }
-    localStorage.setItem('zpos_base', base);
-    tutupSet();
-    toast('Menyinkron...');
-    // Token dipakai dari meta.token_jwt (hasil Setup email+password) — field token
-    // manual dihapus dari UI. Kalau belum pernah Setup, sync_remote 401 → suruh Setup.
-    tinv('sync_remote',{baseUrl:base, token:''})
-      .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
-      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)+(localStorage.getItem('zpos_base')?' — lakukan Setup toko (email admin) dulu':'')); logErr('SINK', 'saveSet sync gagal: '+(e&&e.message?e.message:e)); });
-  }
-  // Setup pertama: login email+password admin tenant (tanpa tempel JWT manual).
-  // Server validasi & balik daftar staff toko (auto-gen PIN utk yg belum punya).
-  // Setelah sukses: simpan base (token kasir via login PIN lokal), reload daftar.
-  async function setupSet(){
+  // Satu tombol "Simpan & Sinkron". Pintar:
+  //  • Sudah pernah setup (lisensi/token ada di meta) → simpan URL + tarik katalog
+  //    (sync_remote) TANPA login ulang.
+  //  • Belum pernah setup / ganti toko → butuh email+password admin utk setup_kasir
+  //    (validasi + tarik daftar karyawan + auto-gen PIN), lalu sinkron katalog.
+  async function saveSet(){
     const base=document.getElementById('setUrl').value.trim();
     const email=document.getElementById('setUser').value.trim();
     const pass=document.getElementById('setPass').value;
-    if(!base||!email||!pass){ toast('Isi Base URL, email, dan password admin'); return; }
-    tutupSet();
-    toast('Menarik daftar karyawan...');
-    try{
-      const r=await tinv('setup_kasir',{baseUrl:base,email,password:pass});
-      localStorage.setItem('zpos_base', base);
-      // jangan simpan password/token — login PIN lokal sudah cukup utk offline
-      toast('Setup OK: '+r);
-      initKasir();
-      // Tarik katalog/member sekarang: token_jwt sudah tersimpan oleh setup_kasir
-      // di SQLite (meta). Panggil sync_remote tanpa token → fallback ke meta.
-      tinv('sync_remote',{baseUrl:base, token:''})
-        .then(r2=>{ toast('Setup OK. Sinkron katalog: '+r2); initKasir(); })
-        .catch(e=>{
-          const m=e&&e.message?e.message:e;
-          showErr('Katalog belum tersinkron: '+m);
-          logErr('SETUP','setupSet sync lanjutan gagal: '+m);
-        });
-    }catch(e){
-      const m=e&&e.message?e.message:e;
-      showErr('Setup gagal: '+m);
-      logErr('SETUP', 'setupSet gagal: '+m);
+    if(!base){ toast('Base URL wajib diisi'); return; }
+    let sudahSetup=false;
+    try{ sudahSetup=!!(await tinv('ambil_lisensi')); }catch(_){ sudahSetup=false; }
+    if(!sudahSetup && (!email||!pass)){
+      toast('Isi email & password admin utk Setup toko pertama'); return;
     }
+    localStorage.setItem('zpos_base', base);
+    tutupSet();
+    if(!sudahSetup){
+      // Setup pertama: login admin → tarik karyawan + token (sudah disimpan Rust di meta).
+      toast('Menyiapkan toko & tarik karyawan...');
+      try{
+        const r=await tinv('setup_kasir',{baseUrl:base,email,password:pass});
+        toast('Setup OK: '+r);
+        initKasir();
+        return tinv('sync_remote',{baseUrl:base, token:''})
+          .then(r2=>{ toast('Setup OK. Sinkron katalog: '+r2); initKasir(); })
+          .catch(e=>{ const m=e&&e.message?e.message:e; showErr('Katalog belum tersinkron: '+m); logErr('SETUP','saveSet setup sinkron gagal: '+m); });
+      }catch(e){
+        const m=e&&e.message?e.message:e;
+        showErr('Setup gagal: '+m); logErr('SETUP', 'saveSet setup gagal: '+m); return;
+      }
+    }
+    // Sudah setup → cukup sinkron dengan token tersimpan.
+    toast('Menyinkron...');
+    return tinv('sync_remote',{baseUrl:base, token:''})
+      .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
+      .catch(e=>{ showErr('Sinkron gagal: '+(e&&e.message?e.message:e)+(localStorage.getItem('zpos_base')?' — coba isi email & password admin utk Setup ulang':'')); logErr('SINK','saveSet sync gagal: '+(e&&e.message?e.message:e)); });
   }
   function syncNow(){
     const base=localStorage.getItem('zpos_base');
@@ -2040,7 +2038,6 @@
   // pill connector → tombol sinkron manual
   document.getElementById('simOnline')?.addEventListener('click',()=>syncNow());
   document.getElementById('setBtn')?.addEventListener('click',saveSet);
-  document.getElementById('setSetupBtn')?.addEventListener('click',setupSet);
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status();
   // Auto-sinkron adaptif via recursive setTimeout (bukan setInterval) supaya
