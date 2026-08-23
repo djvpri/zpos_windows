@@ -1512,6 +1512,7 @@
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
     status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); muatKategoriMember();
+    if(zposIsTauri()) logBonState('init sebelum merge');
     mergeBonSync(); // bon gantung dari sync web terakhir → tampil saat startup/katalog pull
     refLisensi();
     refShift();
@@ -2035,6 +2036,7 @@
     }
     await retryTandaiBon(); // tandai ulang bon lunasPending yg gagal sync sebelumnya
     await retryHapusBon();  // retry hapus bon hapusPending yg gagal sync sebelumnya
+    logBonState('replay selesai');
   }
   // Tarik bon gantung AKTIF dari web yg dibuat device/kasir lain, merge ke daftar
   // lokal. ANTI-DUPLIKAT & ANTI-OVERWRITE: skip bon yg `bonId` uda ada di lokal
@@ -2057,6 +2059,17 @@
       ada.add(id); tambah++;
     }
     if(tambah){ simpanBonStorage(); renderBonList(); }
+    logBonState('merge web(aktif) tambah='+tambah+' web_bon='+(list?list.length:0));
+  }
+  // Diagnosa bon gantung: dump isi array `bon` lokal (jumlah + tiap entri: id server,
+  // flags pending/lunas) ke log error — biar alur bon (berapa masuk dr web, berapa
+  // sisa lokal) kelihatan di zpos-errors.log saat ada bon "menggantung"/tak sinkron.
+  // Dipanggil tiap merge/sinkron (bukan tiap render, biar tak spam).
+  function logBonState(label){
+    try{
+      const ringkas = bon.map(b=>`b${b.bonId||0}${b.lunasPending?'[lunas]':''}${b.hapusPending?'[del]':''}:${b.nama||'?'}`).join(' | ');
+      logErr('BON', `bonstate ${label} count=${bon.length} :: ${ringkas||'(kosong)'}`);
+    }catch(e){}
   }
   // Retry tanda lunas utk bon `lunasPending` (sudah dibayar tunai tapi `tandai_bon`
   // web sebelumnya gagal — jaringan putus di momen bayar). Dipanggil tiap siklus
