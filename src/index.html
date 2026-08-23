@@ -1207,6 +1207,9 @@
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
             bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
             shift_id: SHIFT?SHIFT.id:null,
+            // Tebus bon gantung: tandai id utk web — stok bon uda di-hold saat
+            // gantung (POST /api/bon), jadi transaksi tebus TIDAK kurangi lagi.
+            ...(_tarikBon && _tarikBon.bonId>0 ? { bon_tebus_id: _tarikBon.bonId } : {}),
             created_at:new Date().toISOString() },
       items,
     };
