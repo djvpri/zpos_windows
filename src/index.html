@@ -1130,7 +1130,7 @@
       // otomatis di retryHapusBon (anti bon mengambang web + stok hold macet).
       bon.splice(x,1); simpanBonStorage(); renderBonList();
       const base=localStorage.getItem('zpos_base')||'';
-      tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId})
+      tinv('hapus_bon',{baseUrl:base, bonId:b.bonId})
         .then(()=>{ /* web ACK hapus — bon uda hilang lokal; done */ })
         .catch((e)=>{
           const m = (e&&e.message?e.message:e)||e;
@@ -1243,7 +1243,7 @@
             if(b.bonId && b.bonId>0){
               b.lunasPending=true;           // kunci: cegah tarik ulang / double bayar
               simpanBonStorage();
-              tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:b.bonId})
+              tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:b.bonId})
                 .then(()=>{ b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1); simpanBonStorage(); renderBonList(); const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:''; })
                 .catch(()=>{ if(b.bonId) toast('Bon lunas tercatat. Sinkron tanda lunas ditunda — retry otomatis.'); });
             } else {
@@ -1254,7 +1254,7 @@
             }
           } else if(_bonId){
             const bid=_bonId; _bonId=0;
-            tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:bid}).catch(()=>{});
+            tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:bid}).catch(()=>{});
           }
         })
         .catch(()=>toast('Gagal simpan antrian'));
@@ -2067,7 +2067,7 @@
     for(const b of bon){
       if(!b.lunasPending || !b.bonId || b.bonId<0) continue;
       try{
-        await tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId});
+        await tinv('tandai_bon',{baseUrl:base, bonId:b.bonId});
         b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
       }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryTandaiBon gagal bonId='+b.bonId+' | '+String(m)); }
@@ -2084,7 +2084,7 @@
     for(const b of bon){
       if(!b.hapusPending || !b.bonId || b.bonId<0) continue;
       try{
-        await tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId});
+        await tinv('hapus_bon',{baseUrl:base, bonId:b.bonId});
         b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
       }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryHapusBon gagal bonId='+b.bonId+' | '+String(m)); }
