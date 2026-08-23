@@ -1082,7 +1082,7 @@
       : bon.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
           <button onclick="tarikBon(${x})">Tarik</button>
           <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
@@ -1094,6 +1094,7 @@
   function tarikBon(x){
     const b=bon[x];
     if(b.lunasPending){ toast('Bon sudah dibayar — menunggu sinkron tanda lunas'); return; }
+    if(b.hapusPending){ toast('Bon sedang dihapus — menunggu sinkron'); return; }
     if(_tarikBon === b){ toast('Bon ini sudah ditarik ke keranjang'); return; }
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
@@ -1118,16 +1119,23 @@
   function konfirmasiHapusBon() {
     const x = _bonHapusIdx;
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
-    const pernahTerkirim = !!(bon[x].bonId && bon[x].bonId>0);
-    const bid = bon[x].bonId||0;
-    if(_tarikBon === bon[x]){ _tarikBon=null; _bonId=0; } // hapus bon yg lagi ditarik → bersihkan ref
-    bon.splice(x,1);
-    simpanBonStorage(); // persist setelah hapus
-    // Bon yang pernah terkirim ke web (bonId>0) → hapus juga di server biar tak
-    // mengambang di tab Bon web. Best-effort; gagal (offline) → biarkan utk saat lain.
+    const b = bon[x];
+    if (b.lunasPending){ tutupKonfBon(); toast('Bon sudah lunas — tak bisa dihapus'); return; }
+    const pernahTerkirim = !!(b.bonId && b.bonId>0);
+    if(_tarikBon === b){ _tarikBon=null; _bonId=0; } // hapus bon yg lagi ditarik → bersihkan ref
     if(pernahTerkirim && zposIsTauri()){
+      // Online-path: hapus lokal HANYA saat web ACK (mirip lunasPending). Bon di-hold
+      // stok di web, jadi hapus = barang balik → stok kembali. Gagal (offline) → flag
+      // hapusPending di-retry otomatis di retryHapusBon (anti bon mengambang web).
+      b.hapusPending=true; simpanBonStorage();
       const base=localStorage.getItem('zpos_base')||'';
-      tinv('hapus_bon',{baseUrl:base, bon_id:bid}).catch(()=>{});
+      tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId})
+        .then(()=>{ b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1); simpanBonStorage(); renderBonList(); const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:''; })
+        .catch(()=>{ if(b.bonId) toast('Hapus bon ditunda — retry saat online.'); });
+    } else {
+      // Bon offline (belum ada bonId di web) / non-tauri → hapus lokal langsung.
+      bon.splice(x,1);
+      simpanBonStorage();
     }
     tutupKonfBon();
     bukaBon();
@@ -2014,6 +2022,7 @@
       }catch(e){} // offline lagi / gagal → biarkan retry siklus berikutnya
     }
     await retryTandaiBon(); // tandai ulang bon lunasPending yg gagal sync sebelumnya
+    await retryHapusBon();  // retry hapus bon hapusPending yg gagal sync sebelumnya
   }
   // Tarik bon gantung AKTIF dari web yg dibuat device/kasir lain, merge ke daftar
   // lokal. ANTI-DUPLIKAT & ANTI-OVERWRITE: skip bon yg `bonId` uda ada di lokal
@@ -2052,6 +2061,23 @@
       try{
         await tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId});
         b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
+        simpanBonStorage(); renderBonList();
+      }catch(e){ /* offline lagi → retain utk retry siklus berikutnya */ }
+    }
+  }
+  // Retry hapus bon `hapusPending` (diminta hapus tapi `hapus_bon` web sebelumnya
+  // gagal — offline di momen hapus). Coba ulang; sukses → hapus lokal. IDEMPOTEN.
+  async function retryHapusBon(){
+    if(!zposIsTauri()) return;
+    const base=localStorage.getItem('zpos_base'); if(!base) return;
+    let ada=false;
+    for(const b of bon){ if(b.hapusPending && b.bonId && b.bonId>0){ ada=true; break; } }
+    if(!ada) return;
+    for(const b of bon){
+      if(!b.hapusPending || !b.bonId || b.bonId<0) continue;
+      try{
+        await tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId});
+        b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
       }catch(e){ /* offline lagi → retain utk retry siklus berikutnya */ }
     }
