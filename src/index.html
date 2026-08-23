@@ -2059,7 +2059,19 @@
       ada.add(id); tambah++;
     }
     if(tambah){ simpanBonStorage(); renderBonList(); }
-    logBonState('merge web(aktif) tambah='+tambah+' web_bon='+(list?list.length:0));
+    // Prune ORPHAN: hapus bon lokal yg bonId>0 TAPI sudah tak ada di daftar aktif web
+    // (web uda dihapus/auto-selesai, kasir tak pernah dpt ACK → ngendon b25 dsb).
+    // JANGAN sentuh: hapusPending (retry hapus), lunasPending (retry ACK), bonId=0
+    // (offline belum masuk web), atau yg sedang ditarik (_tarikBon belum lunas).
+    if(list && list.length>=0){
+      const webIds=new Set(list.map(b=>Number(b.id)));
+      const prune=bon.filter(b=>b.bonId>0 && !b.lunasPending && !b.hapusPending && b!==_tarikBon && !webIds.has(b.bonId));
+      if(prune.length){
+        for(const p of prune){ const i=bon.indexOf(p); if(i>=0) bon.splice(i,1); }
+        simpanBonStorage(); renderBonList();
+      }
+      logBonState('merge web(aktif) tambah='+tambah+' web_bon='+list.length+' prune='+prune.length);
+    }
   }
   // Diagnosa bon gantung: dump isi array `bon` lokal (jumlah + tiap entri: id server,
   // flags pending/lunas) ke log error — biar alur bon (berapa masuk dr web, berapa
