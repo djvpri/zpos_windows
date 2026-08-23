@@ -861,13 +861,21 @@
   function tambahItemLain(n,h,q){
     lainItems.push({ id:'l'+Date.now()+'_'+Math.random().toString(36).slice(2,6), nama:n, harga:h, qty:q });
   }
+  // Perbarui total footer tanpa re-render seluruh list (biar input harga/qty
+  // tak kehilangan fokus/kursor saat mengetik). Dipanggil dr oninput.
+  function updateLainTotal(){
+    const total=lainItems.reduce((s,i)=>s+i.harga*i.qty,0);
+    document.getElementById('lainFoot').style.display = lainItems.length?'block':'none';
+    document.getElementById('lainCount').textContent = lainItems.length+' item';
+    document.getElementById('lainTotal').textContent = 'Rp '+total.toLocaleString('id-ID');
+  }
   function renderLainItems(){
     const el=document.getElementById('lainItems');
     el.innerHTML = lainItems.map((it,i)=>
       `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0f2f7;border-radius:10px;padding:7px 10px">
         <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${it.nama}</div>
           <div style="display:flex;align-items:center;gap:5px;margin-top:2px">
-            <input value="${it.harga}" inputmode="numeric" oninput="lainChgHarga(${i},this.value)" style="width:76px;padding:2px 5px;border:1px solid #e2e6ee;border-radius:6px;font-size:11px;outline:none" />
+            <input value="${it.harga}" inputmode="numeric" oninput="lainChgHarga(${i},this.value)" onchange="renderLainItems()" style="width:76px;padding:2px 5px;border:1px solid #e2e6ee;border-radius:6px;font-size:11px;outline:none" />
             <span style="font-size:10px;color:#98a2b3">x ${it.qty} = Rp ${(it.harga*it.qty).toLocaleString('id-ID')}</span>
           </div>
         </div>
@@ -885,8 +893,8 @@
     document.getElementById('lainTotal').textContent = 'Rp '+total.toLocaleString('id-ID');
   }
   function lainHapus(i){ lainItems.splice(i,1); renderLainItems(); }
-  function lainChgQty(i,d){ if(lainItems[i]) lainItems[i].qty=Math.max(1, lainItems[i].qty+d); renderLainItems(); }
-  function lainChgHarga(i,v){ if(lainItems[i]) lainItems[i].harga=parseInt(v||'0',10)||0; renderLainItems(); }
+  function lainChgQty(i,d){ if(lainItems[i]){ lainItems[i].qty=Math.max(1, lainItems[i].qty+d); updateLainTotal(); } }
+  function lainChgHarga(i,v){ if(lainItems[i]){ lainItems[i].harga=parseInt(v||'0',10)||0; updateLainTotal(); } }
   function masukKeranjangLain(){
     if(!lainItems.length){ toast('Belum ada item.'); return; }
     lainItems.forEach(it=>{
