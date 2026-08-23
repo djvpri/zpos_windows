@@ -1131,7 +1131,10 @@
       bon.splice(x,1); simpanBonStorage(); renderBonList();
       const base=localStorage.getItem('zpos_base')||'';
       tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId})
-        .catch(()=>{
+        .then(()=>{ /* web ACK hapus — bon uda hilang lokal; done */ })
+        .catch((e)=>{
+          const m = (e&&e.message?e.message:e)||e;
+          logErr('BON', 'hapus_bon gagal bonId='+b.bonId+' | '+String(m));
           // rollback (hanya bila bon itu tak uda muncul lagi): kembalikan ke daftar + retry
           if(bon.some(o=>o.bonId===b.bonId)) return;
           b.hapusPending=true; bon.push(b); simpanBonStorage(); renderBonList();
