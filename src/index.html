@@ -2124,7 +2124,8 @@
     // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs).
     const base=localStorage.getItem('zpos_base');
     if(!base || syncing || !zposIsTauri()) return;
-    const doPull=Date.now()-lastPull>=PULL_MS;
+    const throttle = (typeof bon !== 'undefined' && bon.length>0) ? 45000 : PULL_MS;
+    const doPull=Date.now()-lastPull>=throttle;
     syncing=true;
     try{
       if(doPull){
