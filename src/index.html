@@ -1235,7 +1235,7 @@
     };
     if(zposIsTauri()){
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
-        .then(()=>{
+        .then(async ()=>{
           offQtn++; renderOffQ();
           // Bon yang ditarik & kini LUNAS → tandai selesai web & baru hapus LOKAL
           // SAAT web ACK. Kalau `tandai_bon` gagal (offline), bon TETAP di daftar
