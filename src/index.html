@@ -1249,7 +1249,7 @@
               simpanBonStorage();
               tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:b.bonId})
                 .then(()=>{ b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1); simpanBonStorage(); renderBonList(); const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:''; })
-                .catch(()=>{ if(b.bonId) toast('Bon lunas tercatat. Sinkron tanda lunas ditunda — retry otomatis.'); });
+                .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','tebus tandai_bon gagal bonId='+b.bonId+' | '+String(m)); if(b.bonId) toast('Bon lunas tercatat. Sinkron tanda lunas ditunda — retry otomatis.'); });
             } else {
               // Bon offline (belum ada bonId di web) → hapus lokal langsung; tak pernah masuk web.
               const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
@@ -1258,7 +1258,7 @@
             }
           } else if(_bonId){
             const bid=_bonId; _bonId=0;
-            tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:bid}).catch(()=>{});
+            tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:bid}).catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','lagi tandai_bon gagal bid='+bid+' | '+String(m)); });
           }
         })
         .catch(()=>toast('Gagal simpan antrian'));
