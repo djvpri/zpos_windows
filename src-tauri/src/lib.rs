@@ -229,7 +229,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url.clone(), token);
 
-    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize), String> {
+    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize, usize), String> {
         // `/api/auth/me` pertama: validasi token + dapat nama toko. Nama toko ini
         // dipakai deteksi GANTI TENANT — kalau beda dari sync sebelumnya, bersihkan
         // cache katalog/member lokal (produk/kategori upsert tak pernah hapus baris
@@ -265,15 +265,25 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
                 0
             }
         };
+        // pull_bon best-effort: tarik daftar bon gantung AKTIF dari web utk
+        // ditampilkan/dilayani di kasir ini (merge by id di frontend). Gagal tidak
+        // merusak sync (kasir tetap jalan dgn bon lokal).
+        let n_bon = match c.pull_bon(conn) {
+            Ok(n) => n,
+            Err(e) => {
+                submit_log(&app, &format!("sync pull_bon SKIP: {e}"));
+                0
+            }
+        };
         let n_push = c.push_antrian(conn)?;
-        Ok((n_kat, n_produk, n_km, n_member, n_user, n_push))
+        Ok((n_kat, n_produk, n_km, n_member, n_user, n_bon, n_push))
     })();
     match &r {
-        Ok((k, p, km, m, u, s)) => submit_log(&app, &format!("sync OK kategori={k} produk={p} katmember={km} member={m} user={u} push={s}")),
+        Ok((kk, pp, km, m, u, b, s)) => submit_log(&app, &format!("sync OK kategori={kk} produk={pp} katmember={km} member={m} user={u} bon={b} push={s}")),
         Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
     }
-    let (n_kat, n_produk, n_km, n_member, n_user, n_push) = r?;
-    Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, push {n_push}"))
+    let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_push) = r?;
+    Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, push {n_push}"))
 }
 
 // Push antrian offline saja (tanpa tarik katalog/users). Dipakai siklus
@@ -380,6 +390,17 @@ fn ambil_lisensi(state: State<AppState>) -> Result<Option<Lisensi>, String> {
     let Some(v) = v else { return Ok(None) };
     let l: Lisensi = serde_json::from_str(&v).map_err(|e| e.to_string())?;
     Ok(Some(l))
+}
+
+// Baca daftar bon gantung AKTIF yg ditarik web saat sync (meta `bon_sync`, raw
+// JSON array). Frontend merge by id (skip-existing) → anti-duplikat & anti-overwrite.
+#[tauri::command]
+fn ambil_bon_sync(state: State<AppState>) -> Result<Option<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let v: Option<String> = conn
+        .query_row("SELECT v FROM meta WHERE k='bon_sync'", [], |r| r.get(0))
+        .ok();
+    Ok(v)
 }
 
 // ===== Shift kasir (per kasir lokal = id web user) =====
@@ -1098,7 +1119,7 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, pilih_log_dir, get_log_dir, nota_temp,
-            daftar_printer, cetak_escpos, buka_laci, ambil_lisensi,
+            daftar_printer, cetak_escpos, buka_laci, ambil_lisensi, ambil_bon_sync,
             buka_shift, tutup_shift, ambil_shift,
             saldo_shift, saldo_shift_offline, kirim_kas_keluar, daftar_kas_keluar,
             kirim_bon, tandai_bon, hapus_bon

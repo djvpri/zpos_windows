@@ -413,6 +413,28 @@ impl SyncClient {
         Ok(me.nama)
     }
 
+    // Tarik daftar bon GANTUNG AKTIF dari web (GET /api/bon, tanpa ?semua → hanya
+    // selesai=false) lalu simpan raw JSON ke meta `bon_sync`. Dipakai frontend utk
+    // merge anti-duplikat (upsert by id, skip yg sudah ada di lokal). Bon yang uda
+    // selesai TIDAK ditarik (kasir tak perlu). Item virtual id<0 tak ada di web
+    // (server tolak) → aman utk pull.
+    pub fn pull_bon(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/bon"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let body = resp.text().map_err(|e| format!("text: {e}"))?;
+        let n: usize = serde_json::from_str::<Vec<serde_json::Value>>(&body)
+            .map(|a| a.len())
+            .unwrap_or(0);
+        conn.execute(
+            "INSERT INTO meta (k,v) VALUES ('bon_sync',?1)
+             ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            [&body],
+        ).map_err(|e| e.to_string())?;
+        Ok(n)
+    }
+
     // Simpan JSON shift aktif per user ke meta (utk baca offline oleh `ambil_shift`).
     fn store_shift(&self, conn: &mut Connection, user_id: i64, s: &ShiftAktif) -> Result<(), String> {
         let v = serde_json::to_string(s).map_err(|e| e.to_string())?;

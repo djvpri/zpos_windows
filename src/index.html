@@ -1482,6 +1482,7 @@
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
     status(); buildCats(); render(); renderCart(); renderMemberList(); renderOffQ(); muatKategoriMember();
+    mergeBonSync(); // bon gantung dari sync web terakhir → tampil saat startup/katalog pull
     refLisensi();
     refShift();
   }
@@ -2003,6 +2004,28 @@
       }catch(e){} // offline lagi / gagal → biarkan retry siklus berikutnya
     }
   }
+  // Tarik bon gantung AKTIF dari web yg dibuat device/kasir lain, merge ke daftar
+  // lokal. ANTI-DUPLIKAT & ANTI-OVERWRITE: skip bon yg `bonId` uda ada di lokal
+  // (versi lokal tetap dihormati), hanya tambah yg BENAR-BENAR baru. Dipanggil
+  // setelah sync_remote sukses (pull). Bon yg sedang ditarik _tarikBon tetap.
+  async function mergeBonSync(){
+    if(!zposIsTauri()) return;
+    let raw=null; try{ raw=await tinv('ambil_bon_sync'); }catch(e){ return; }
+    if(!raw) return;
+    let list=[]; try{ list=JSON.parse(raw); }catch(e){ return; }
+    const ada=new Set(bon.filter(b=>b.bonId>0).map(b=>b.bonId));
+    let tambah=0;
+    for(const b of list){
+      const id=Number(b.id); if(!id||ada.has(id)) continue;
+      const nama=(b.nama||'').trim();
+      const items=Object.entries(b.produk||{}).map(([pid,q])=>({id:Number(pid),q:Number(q)}))
+        .filter(it=>it.id>0 && it.q>0);
+      if(!items.length) continue;
+      bon.push({ nama, items, total:Number(b.total)||0, bonId:id });
+      ada.add(id); tambah++;
+    }
+    if(tambah){ simpanBonStorage(); renderBonList(); }
+  }
   async function autoSync(){
     // Kredensial jwt dipegang Rust (meta token_jwt hasil setup). Cukup butuh base;
     // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs).
@@ -2016,6 +2039,7 @@
         lastPull=Date.now();
         // Katalog bisa berubah (produk/harga/stok) → re-init penuh hanya saat pull.
         await initKasir();
+        await mergeBonSync(); // tarik+merge bon gantung aktif dari device/kasir lain
       }else{
         // Push ringan: antrian offline → server. Tak mengubah katalog lokal, jadi
         // tak usah initKasir (render berat). Cukup refresh badge kas + antrian.
