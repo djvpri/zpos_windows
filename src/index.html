@@ -322,6 +322,18 @@
   </div>
 </div>
 
+<!-- Opsi cetak nota setelah bon digantung -->
+<div class="modal" id="bonCetakModal">
+  <div class="mc" style="max-width:340px">
+    <div class="mch"><span><i class="bi bi-printer"></i> Bon Digantung</span><span class="x" onclick="tutupBonCetak()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mcb">
+      <p id="bonCetakTxt" style="font-size:13px;color:#3b4658;margin:0 0 14px"></p>
+      <button class="sbtn" onclick="cetakNotaBon()"><i class="bi bi-printer"></i> Cetak Nota Bon</button>
+      <button class="sbtn" style="background:#e3e6ea;color:#3b4658" onclick="tutupBonCetak()">Tutup</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="addMemberModal">
   <div class="mc" style="max-width:360px">
     <div class="mch"><span><i class="bi bi-person-plus"></i> Daftarkan Member</span><span class="x" onclick="tutupAddMember()"><i class="bi bi-x-lg"></i></span></div>
@@ -1034,7 +1046,39 @@
         .catch(()=>{}); // offline → tetap lokal, tak masuk web
     }
     toast('Bon digantung atas nama '+member.n);
+    // Siapkan nota bon utk opsi cetak (header BON, belum lunas). Set notaTerakhir
+    // supaya tombol Cetak Nota (spooler/HTML) reuse alur yg sama dgn nota biasa.
+    notaTerakhir = buildNotaBon(bon.length-1);
+    const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    document.getElementById('bonCetakTxt').innerHTML =
+      'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(member.n)+'</b> digantung.<br>Tampilkan / cetak nota bon?';
+    document.getElementById('bonCetakModal').classList.add('show');
     clearCart();
+  }
+  // Ambil data item bon utk nota ESC/POS/HTML — bentuk sama dgn notaTerakhir.
+  function buildNotaBon(idx){
+    const b=bon[idx]||{items:[],total:0};
+    // Item virtual (id negatif) ambil dr vmap bon; item asli dr pCart.
+    const itemsFix=b.items.map(it=>{
+      const src = (it.id<0 && b.vmap && b.vmap[it.id]) ? {n:b.vmap[it.id].nama, p:b.vmap[it.id].harga} : pCart(it.id);
+      const h=src ? (hargaMember(it.id)||src.p) : 0;
+      return { nama_produk:src?src.n:'', qty:it.q, subtotal:h*it.q };
+    });
+    return { items:itemsFix, subtotal:b.total, diskon:0, total:b.total,
+             bayar:0, kembali:0, noTransaksi:'BON', metode:'BON (digantung)',
+             kasir:kasirAktif.nama, waktu:new Date().toLocaleString('id-ID') };
+  }
+  function tutupBonCetak(){ document.getElementById('bonCetakModal').classList.remove('show'); }
+  function cetakNotaBon(){
+    if(!notaTerakhir||!notaTerakhir.noTransaksi) return;
+    if(zposIsTauri()){ cetakSpooler(); }
+    else {
+      const html='<!doctype html><html lang="id"><head><meta charset="utf-8"><title>Nota '+notaTerakhir.noTransaksi+'</title>'+
+        '<style>body{margin:0}</style></head><body onload="window.print()">'+notaHtml()+'</body></html>';
+      const w=window.open('','_blank','width=380,height=640');
+      if(w){ w.document.write(html); w.document.close(); w.focus(); w.onload=function(){ w.print(); }; }
+      else toast('Popup diblokir — izinkan popup utk nota.');
+    }
   }
   function bukaBon(){
     document.getElementById('bonList').innerHTML = bon.length===0
