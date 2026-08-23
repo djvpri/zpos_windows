@@ -1096,10 +1096,11 @@
     const b=bon[x];
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
-    _bonId = 0; // bon uda ditarik → tak perlu tandai lagi saat bayar (sudah tandai di bawah)
-    // Bon yang pernah terkirim ke server (bonId>0) → tandai SELESAI sekarang, bukan
-    // nunggu dibayar. Ditarik = masuk counter utk dibayar; kalau tak langsung bayar
-    // (cart dibatalkan dll), bon tetap tak mengambang 'aktif' di web.
+    _bonId = b.bonId || 0; // simpan id utk retry tandai saat bayar (prosesBayar)
+    // Bon yang pernah terkirim ke server (bonId>0) → tandai SELESAI sekarang juga,
+    // bukan cuma nunggu dibayar. Ditarik = masuk counter; kalau tak langsung bayar
+    // (cart dibatalkan dll), bon tetap tak mengambang 'aktif' di web. Retry ganda
+    // (di sini + saat bayar) idempoten utk jaringan flaky.
     if(b.bonId && b.bonId>0 && zposIsTauri()){
       const base=localStorage.getItem('zpos_base')||'';
       tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId}).catch(()=>{});
@@ -1213,8 +1214,9 @@
         .then(()=>{
           offQtn++; renderOffQ();
           // Bon server yang ditarik tadi sudah terlunasi → tandai selesai biar tak
-          // mengambang aktif di tab Bon web.
-          if(_bonId){ const bid=_bonId; _bonId=0; tinv('tandai_bon',{bonId:bid}).catch(()=>{}); }
+          // mengambang aktif di tab Bon web. Param WAJIB `bon_id` (Rust fn tandai_bon);
+          // `bonId` salah → deserialize gagal → reject diam-diam → bon tetap aktif web.
+          if(_bonId){ const bid=_bonId; _bonId=0; tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:bid}).catch(()=>{}); }
         })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
