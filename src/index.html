@@ -1042,7 +1042,7 @@
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
       tinv('kirim_bon',{ baseUrl:base, nama: member.n, produk: JSON.stringify(webProduk), total: sub-disc })
-        .then(serverId=>{ bon[idx].bonId=serverId; })
+        .then(serverId=>{ bon[idx].bonId=serverId; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
         .catch(()=>{}); // offline → tetap lokal, tak masuk web
     }
     toast('Bon digantung atas nama '+member.n);
@@ -1096,7 +1096,14 @@
     const b=bon[x];
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
-    _bonId = b.bonId || 0; // kalau bon pernah terkirim ke server, tandai selesai saat dibayar di windows
+    _bonId = 0; // bon uda ditarik → tak perlu tandai lagi saat bayar (sudah tandai di bawah)
+    // Bon yang pernah terkirim ke server (bonId>0) → tandai SELESAI sekarang, bukan
+    // nunggu dibayar. Ditarik = masuk counter utk dibayar; kalau tak langsung bayar
+    // (cart dibatalkan dll), bon tetap tak mengambang 'aktif' di web.
+    if(b.bonId && b.bonId>0 && zposIsTauri()){
+      const base=localStorage.getItem('zpos_base')||'';
+      tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId}).catch(()=>{});
+    }
     bon.splice(x,1);
     simpanBonStorage(); // persist setelah tarik
     document.getElementById('bonModal').classList.remove('show');
