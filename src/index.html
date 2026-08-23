@@ -1082,7 +1082,7 @@
       : bon.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
           <button onclick="tarikBon(${x})">Tarik</button>
           <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
@@ -1093,6 +1093,7 @@
   }
   function tarikBon(x){
     const b=bon[x];
+    if(b.lunasPending){ toast('Bon sudah dibayar — menunggu sinkron tanda lunas'); return; }
     if(_tarikBon === b){ toast('Bon ini sudah ditarik ke keranjang'); return; }
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
@@ -1213,19 +1214,25 @@
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
         .then(()=>{
           offQtn++; renderOffQ();
-          // Bon yang ditarik & kini LUNAS → tandai selesai web + hapus dari daftar
-          // lokal. Param WAJIB `bon_id` (Rust fn tandai_bon); `bonId` salah →
-          // deserialize gagal → reject diam-diam → bon tetap aktif web.
+          // Bon yang ditarik & kini LUNAS → tandai selesai web & baru hapus LOKAL
+          // SAAT web ACK. Kalau `tandai_bon` gagal (offline), bon TETAP di daftar
+          // dengan flag lunasPending=true → di-cegah tarik ulang (anti pembayaran
+          // ganda) & akan di-retry otomatis di `retryTandaiBon` (tiap siklus sync).
           if(_tarikBon){
             const b=_tarikBon;
-            if(b.bonId && b.bonId>0){
-              tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:b.bonId}).catch(()=>{});
-            }
-            const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
-            simpanBonStorage();
             _tarikBon=null; _bonId=0;
-            renderBonList();
-            const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:'';
+            if(b.bonId && b.bonId>0){
+              b.lunasPending=true;           // kunci: cegah tarik ulang / double bayar
+              simpanBonStorage();
+              tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:b.bonId})
+                .then(()=>{ b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1); simpanBonStorage(); renderBonList(); const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:''; })
+                .catch(()=>{ if(b.bonId) toast('Bon lunas tercatat. Sinkron tanda lunas ditunda — retry otomatis.'); });
+            } else {
+              // Bon offline (belum ada bonId di web) → hapus lokal langsung; tak pernah masuk web.
+              const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
+              simpanBonStorage(); renderBonList();
+              const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:'';
+            }
           } else if(_bonId){
             const bid=_bonId; _bonId=0;
             tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:bid}).catch(()=>{});
@@ -2003,6 +2010,7 @@
         b.bonId=id; simpanBonStorage();
       }catch(e){} // offline lagi / gagal → biarkan retry siklus berikutnya
     }
+    await retryTandaiBon(); // tandai ulang bon lunasPending yg gagal sync sebelumnya
   }
   // Tarik bon gantung AKTIF dari web yg dibuat device/kasir lain, merge ke daftar
   // lokal. ANTI-DUPLIKAT & ANTI-OVERWRITE: skip bon yg `bonId` uda ada di lokal
@@ -2025,6 +2033,25 @@
       ada.add(id); tambah++;
     }
     if(tambah){ simpanBonStorage(); renderBonList(); }
+  }
+  // Retry tanda lunas utk bon `lunasPending` (sudah dibayar tunai tapi `tandai_bon`
+  // web sebelumnya gagal — jaringan putus di momen bayar). Dipanggil tiap siklus
+  // sync (lewat replayBonServer): coba tandai ulang; sukses → hapus bon lokal.
+  // IDEMPOTEN: PATCH selesai berulang aman (double-mark tak ubah apa-apa).
+  async function retryTandaiBon(){
+    if(!zposIsTauri()) return;
+    const base=localStorage.getItem('zpos_base'); if(!base) return;
+    let ada=false;
+    for(const b of bon){ if(b.lunasPending && b.bonId && b.bonId>0){ ada=true; break; } }
+    if(!ada) return;
+    for(const b of bon){
+      if(!b.lunasPending || !b.bonId || b.bonId<0) continue;
+      try{
+        await tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId});
+        b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
+        simpanBonStorage(); renderBonList();
+      }catch(e){ /* offline lagi → retain utk retry siklus berikutnya */ }
+    }
   }
   async function autoSync(){
     // Kredensial jwt dipegang Rust (meta token_jwt hasil setup). Cukup butuh base;
