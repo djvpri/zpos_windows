@@ -1077,6 +1077,10 @@
   }
   function renderBonList(){
     const el=document.getElementById('bonList'); if(!el) return;
+    // Selalu sinkronkan badge tab Bon dgn daftar (bon bisa diubah via retry-sync,
+    // merge, dll yg hanya panggil renderBonList). YAGNI: update di sini, sumber tunggal.
+    const bb=document.getElementById('bonBadge');
+    if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:'';
     el.innerHTML = bon.length===0
       ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.</p>`
       : bon.map((b,x)=>`
