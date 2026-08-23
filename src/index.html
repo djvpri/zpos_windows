@@ -2070,7 +2070,7 @@
         await tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId});
         b.lunasPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
-      }catch(e){ /* offline lagi → retain utk retry siklus berikutnya */ }
+      }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryTandaiBon gagal bonId='+b.bonId+' | '+String(m)); }
     }
   }
   // Retry hapus bon `hapusPending` (diminta hapus tapi `hapus_bon` web sebelumnya
@@ -2087,7 +2087,7 @@
         await tinv('hapus_bon',{baseUrl:base, bon_id:b.bonId});
         b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
-      }catch(e){ /* offline lagi → retain utk retry siklus berikutnya */ }
+      }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryHapusBon gagal bonId='+b.bonId+' | '+String(m)); }
     }
   }
   async function autoSync(){
