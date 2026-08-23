@@ -1273,7 +1273,7 @@
     const bold=s=>{ B.push('\x1bE\x01'+s+'\x1bE\x00\n'); };
     const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
     const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
-    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
+    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-b.length))+b);
     // Header toko: nama bold, alamat & telepon center. Panjang > 32 wrap ke baris
     // berikut (tetap center). Kosong → baris dilewat, tanpa baris sampah kosong.
     const wrapCenter=s=>{
@@ -1369,7 +1369,7 @@
     const bold=s=>{ B.push('\x1bE\x01'+s+'\x1bE\x00\n'); };
     const center=s=>{ B.push('\x1ba\x01'+s+'\n'); };
     const left=s=>{ B.push('\x1ba\x00'+s+'\n'); };
-    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-('Rp '+String(b)).length))+b);
+    const totalLine=(a,b)=>left(a+' '.repeat(Math.max(1,32-a.length-b.length))+b);
     const kasAkhir=(Number(r.modal_awal)||0)+(Number(r.total_tunai)||0)-(Number(r.total_kas_keluar)||0);
     B.push('\x1b@'); // init
     center('\x1bE\x01REKAP SHIFT\x1bE\x00');
