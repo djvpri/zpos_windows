@@ -1260,6 +1260,12 @@
             const bid=_bonId; _bonId=0;
             tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bonId:bid}).catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','lagi tandai_bon gagal bid='+bid+' | '+String(m)); });
           }
+          // REALTIME PUSH: kirim transaksi baru (termasuk tebus bon) ke server
+          // SEKARANG, bukan nunggu siklus 60s — stok web update instan. Kalau
+          // offline, gagal diam (bakal ter-push siklus berikutnya).
+          if(navigator.onLine || document.visibilityState !== 'hidden'){
+            try{ const pushed=await tinv('push_antrian_only',{baseUrl:localStorage.getItem('zpos_base')||'', token:''}); if(pushed>0){ refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); } }catch(e){}
+          }
         })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
