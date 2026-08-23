@@ -817,7 +817,7 @@
     if(d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
   }
-  function clearCart(){ cart=[]; renderCart(); }
+  function clearCart(){ cart=[]; _tarikBon=null; _bonId=0; renderCart(); }
 
   // ===== Penjualan Lainnya (item/jasa harga bebas) =====
   // Ambil produk utk id keranjang: id asli → PRODUK, id virtual negatif → virtualProduk.
@@ -1075,39 +1075,43 @@
       else toast('Popup diblokir — izinkan popup utk nota.');
     }
   }
-  function bukaBon(){
-    document.getElementById('bonList').innerHTML = bon.length===0
+  function renderBonList(){
+    const el=document.getElementById('bonList'); if(!el) return;
+    el.innerHTML = bon.length===0
       ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.</p>`
       : bon.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm">${b.nama}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
           <button onclick="tarikBon(${x})">Tarik</button>
           <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
+  }
+  function bukaBon(){
+    renderBonList();
     document.getElementById('bonModal').classList.add('show');
   }
   function tarikBon(x){
     const b=bon[x];
+    if(_tarikBon === b){ toast('Bon ini sudah ditarik ke keranjang'); return; }
     cart = b.items.map(it=>({id:it.id,q:it.q}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
-    _bonId = b.bonId || 0; // simpan id utk retry tandai saat bayar (prosesBayar)
-    // Bon yang pernah terkirim ke server (bonId>0) → tandai SELESAI sekarang juga,
-    // bukan cuma nunggu dibayar. Ditarik = masuk counter; kalau tak langsung bayar
-    // (cart dibatalkan dll), bon tetap tak mengambang 'aktif' di web. Retry ganda
-    // (di sini + saat bayar) idempoten utk jaringan flaky.
-    if(b.bonId && b.bonId>0 && zposIsTauri()){
-      const base=localStorage.getItem('zpos_base')||'';
-      tinv('tandai_bon',{baseUrl:base, bon_id:b.bonId}).catch(()=>{});
+    if(b.items.every(it=>!!(it.id>0))===false && Object.keys(b.vmap||{}).length===0){
+      // safety: tanpa vmap item virtual tak bisa direstore — biarkan (jarang terjadi)
     }
-    bon.splice(x,1);
-    simpanBonStorage(); // persist setelah tarik
+    // Tarik ≠ bayar: TIDAK hapus bon dari daftar & TIDAK tandai selesai di sini.
+    // Bon tetap tersimpan sampai benar-benar LUNAS (prosesBayar). Kalau user batal
+    // (kosongkan keranjang), bon tetap ada di daftar — TIDAK hilang (fix data-loss).
+    _tarikBon = b;               // referensi bon yang sedang ditarik ke keranjang
+    _bonId = b.bonId || 0;       // utk tandai selesai + hapus saat bayar
+    renderBonList();
     document.getElementById('bonModal').classList.remove('show');
-    toast('Bon ditarik');
+    toast('Bon ditarik. Bayar utk coret dari daftar.');
     renderCart();
   }
   let _bonHapusIdx = -1;
-  let _bonId = 0; // id bon server yang sedang ditarik → ditandai selesai saat bayar
+  let _bonId = 0;         // id bon server yang sedang ditarik → ditandai selesai saat bayar
+  let _tarikBon = null;   // referensi objek bon yang sedang ditarik ke keranjang (belum bayar)
   function hapusBon(x){ _bonHapusIdx = x; document.getElementById('konfBonModal').classList.add('show'); }
   function tutupKonfBon(){ document.getElementById('konfBonModal').classList.remove('show'); }
   function konfirmasiHapusBon() {
@@ -1115,6 +1119,7 @@
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
     const pernahTerkirim = !!(bon[x].bonId && bon[x].bonId>0);
     const bid = bon[x].bonId||0;
+    if(_tarikBon === bon[x]){ _tarikBon=null; _bonId=0; } // hapus bon yg lagi ditarik → bersihkan ref
     bon.splice(x,1);
     simpanBonStorage(); // persist setelah hapus
     // Bon yang pernah terkirim ke web (bonId>0) → hapus juga di server biar tak
@@ -1208,10 +1213,23 @@
       tinv('antri_transaksi',{t:{client_ref:noTransaksi, payload, metode, total, user_id:kasirAktif.id, user_nama:kasirAktif.nama}})
         .then(()=>{
           offQtn++; renderOffQ();
-          // Bon server yang ditarik tadi sudah terlunasi → tandai selesai biar tak
-          // mengambang aktif di tab Bon web. Param WAJIB `bon_id` (Rust fn tandai_bon);
-          // `bonId` salah → deserialize gagal → reject diam-diam → bon tetap aktif web.
-          if(_bonId){ const bid=_bonId; _bonId=0; tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:bid}).catch(()=>{}); }
+          // Bon yang ditarik & kini LUNAS → tandai selesai web + hapus dari daftar
+          // lokal. Param WAJIB `bon_id` (Rust fn tandai_bon); `bonId` salah →
+          // deserialize gagal → reject diam-diam → bon tetap aktif web.
+          if(_tarikBon){
+            const b=_tarikBon;
+            if(b.bonId && b.bonId>0){
+              tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:b.bonId}).catch(()=>{});
+            }
+            const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
+            simpanBonStorage();
+            _tarikBon=null; _bonId=0;
+            renderBonList();
+            const bb=document.getElementById('bonBadge'); if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:'';
+          } else if(_bonId){
+            const bid=_bonId; _bonId=0;
+            tinv('tandai_bon',{baseUrl:localStorage.getItem('zpos_base')||'', bon_id:bid}).catch(()=>{});
+          }
         })
         .catch(()=>toast('Gagal simpan antrian'));
     } else {
