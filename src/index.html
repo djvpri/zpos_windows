@@ -1061,7 +1061,7 @@
     });
     return { items:itemsFix, subtotal:b.total, diskon:0, total:b.total,
              bayar:0, kembali:0, noTransaksi:'BON', metode:'BON (digantung)',
-             kasir:kasirAktif.nama, waktu:new Date().toLocaleString('id-ID') };
+             kasir:kasirAktif.nama, member: b.nama || null, waktu:new Date().toLocaleString('id-ID') };
   }
   function tutupBonCetak(){ document.getElementById('bonCetakModal').classList.remove('show'); }
   function cetakNotaBon(){
@@ -1226,6 +1226,7 @@
     const payload={
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
             bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
+            member_nama: member?.nama || null,
             shift_id: SHIFT?SHIFT.id:null,
             // Aplikasi asal: 'kasir' (Z1 Kasir Tauri) / 'web' (dibuka browser). Server default 'web'.
             sumber: zposIsTauri()?'kasir':'web',
@@ -1298,6 +1299,7 @@
     // Catatan: TIDAK menyimpan data sensitif — cuma struk (item, harga, total).
     notaTerakhir = { items, subtotal, diskon, total, bayar, kembali,
                      noTransaksi, metode, kasir:kasirAktif.nama,
+                     member: member?.nama || null,
                      waktu:new Date().toLocaleString('id-ID') };
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
@@ -1329,6 +1331,7 @@
     const infoHtml = '<div>No : '+esc(blokInfo[0])+'</div>'
       +'<div>Tgl: '+esc(blokInfo[1])+'</div>'
       +(blokInfo[2]?'<div>Ksr: '+esc(blokInfo[2])+'</div>':'')
+      +(n.member?'<div>Mbr: '+esc(n.member)+'</div>':'')
       +(n.metode?'<div>Pay: '+esc(n.metode)+'</div>':'');
     const ringkas = '<div style="display:flex;justify-content:space-between"><span>Subtotal</span><span>'+toId(n.subtotal)+'</span></div>'
       +'<div style="display:flex;justify-content:space-between"><span>Diskon</span><span>-'+toId(n.diskon)+'</span></div>';
@@ -1378,7 +1381,7 @@
     const divider= d.dividerSolid ? '--------------------------------' : '- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
     const blokInfo=[n.noTransaksi, n.waktu];
     if(d.showKsr) blokInfo.push(n.kasir);
-    const infoLeft=()=>{ left('No : '+esc(blokInfo[0])); left('Tgl: '+esc(blokInfo[1])); if(blokInfo[2]) left('Ksr: '+esc(blokInfo[2])); left('Pay: '+esc(n.metode)); };
+    const infoLeft=()=>{ left('No : '+esc(blokInfo[0])); left('Tgl: '+esc(blokInfo[1])); if(blokInfo[2]) left('Ksr: '+esc(blokInfo[2])); if(n.member) left('Mbr: '+esc(n.member)); left('Pay: '+esc(n.metode)); };
     B.push('\x1b@'); // init
     center('\x1bE\x01'+esc(TOKO_INFO.nama||'Z1 Kasir')+'\x1bE\x00');
     wrapCenter(esc(TOKO_INFO.alamat));
