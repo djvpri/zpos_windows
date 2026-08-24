@@ -938,7 +938,7 @@ fn cetak_escpos(escpos: String, nama_printer: String) -> Result<String, String> 
     // cegah leak & jangan pernah lupa close printer pada error
     let r = (|| -> Result<String, String> {
         let doc = DOC_INFO_1W {
-            pDocName: PWSTR(w!("ZPos nota").as_ptr() as *mut u16),
+            pDocName: PWSTR(w!("Z1 Kasir nota").as_ptr() as *mut u16),
             pOutputFile: PWSTR::null(),
             pDatatype: PWSTR(w!("RAW").as_ptr() as *mut u16),
         };

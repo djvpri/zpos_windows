@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Z1 Pos — Mockup Tauri</title>
+<title>Z1 Kasir — Mockup Tauri</title>
 <link rel="stylesheet" href="bi/bootstrap-icons.css" />
 <style>
   * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI', system-ui, sans-serif; }
@@ -213,7 +213,7 @@
 
   <!-- Header -->
   <div class="hdr">
-    <div class="logo"><img src="logo.png" alt="Z1 Pos" /><span class="logoToko" id="logoToko"></span></div>
+    <div class="logo"><img src="logo.png" alt="Z1 Kasir" /><span class="logoToko" id="logoToko"></span></div>
     <div class="conn off" id="conn"><span class="dot"></span><span id="connTxt">Offline</span></div>
     <div class="right">
       <div class="licBadge" id="licBadge" title="Lisensi toko"><i class="bi bi-shield-check"></i><span id="licTxt">—</span></div>
@@ -351,9 +351,9 @@
 <!-- Modal setelan sinkron -->
 <div class="modal" id="setModal">
   <div class="mc">
-    <div class="mch"><span><i class="bi bi-gear"></i> Sinkron ke Server Z1 Pos</span><span class="x" onclick="tutupSet()"><i class="bi bi-x-lg"></i></span></div>
+    <div class="mch"><span><i class="bi bi-gear"></i> Sinkron ke Server Z1 Kasir</span><span class="x" onclick="tutupSet()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb">
-      <div class="fld"><label>Base URL server Z1 Pos</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
+      <div class="fld"><label>Base URL server Z1 Kasir</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
 
       <!-- Setup toko (email admin) DIPERLUKAN hanya saat pertama / belum pernah
            setup (belum ada lisensi/token). Setelah itu cukup tombol Simpan & Sinkron. -->
@@ -562,7 +562,7 @@
   let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
   // Info toko utk header nota (cached dr `ambil_lisensi`/sync): nama, alamat,
   // telepon, catatan_struk. Fallback ke teks statis bila belum sinkron.
-  let TOKO_INFO = { nama:'Z1 POS', alamat:'', telepon:'', catatan_struk:'' };
+  let TOKO_INFO = { nama:'Z1 Kasir', alamat:'', telepon:'', catatan_struk:'' };
   let SHIFT = null;        // {id, kasir_nama, modal_awal, buka_at, aktif} shift aktif kasir login
 
   const DEMO_PRODUK = [
@@ -1227,6 +1227,8 @@
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
             bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
             shift_id: SHIFT?SHIFT.id:null,
+            // Aplikasi asal: 'kasir' (Z1 Kasir Tauri) / 'web' (dibuka browser). Server default 'web'.
+            sumber: zposIsTauri()?'kasir':'web',
             // Tebus bon gantung: tandai id utk web — stok bon uda di-hold saat
             // gantung (POST /api/bon), jadi transaksi tebus TIDAK kurangi lagi.
             ...(_tarikBon && _tarikBon.bonId>0 ? { bon_tebus_id: _tarikBon.bonId } : {}),
@@ -1316,7 +1318,7 @@
       return `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span><span style="flex-shrink:0">${toId(i.subtotal)}</span></div>`;
     }).join('');
     return `<div style="font-family:'Consolas','Courier New',monospace;font-size:12px;width:288px;margin:0 auto;color:#111">
-      <div style="text-align:center;font-weight:bold;font-size:14px">${esc(TOKO_INFO.nama||'Z1 POS')}</div>
+      <div style="text-align:center;font-weight:bold;font-size:14px">${esc(TOKO_INFO.nama||'Z1 Kasir')}</div>
       ${TOKO_INFO.alamat?`<div style="text-align:center;color:#555;font-size:10px">${esc(TOKO_INFO.alamat)}</div>`:''}
       ${TOKO_INFO.telepon?`<div style="text-align:center;color:#555;font-size:10px">Telp: ${esc(TOKO_INFO.telepon)}</div>`:''}
       <div style="border-top:1px dashed #000;margin:4px 0"></div>
@@ -1357,7 +1359,7 @@
       if(s) center(s);
     };
     B.push('\x1b@'); // init
-    center('\x1bE\x01'+esc(TOKO_INFO.nama||'Z1 POS')+'\x1bE\x00');
+    center('\x1bE\x01'+esc(TOKO_INFO.nama||'Z1 Kasir')+'\x1bE\x00');
     wrapCenter(esc(TOKO_INFO.alamat));
     if(TOKO_INFO.telepon) wrapCenter('Telp: '+esc(TOKO_INFO.telepon));
     line('--------------------------------');

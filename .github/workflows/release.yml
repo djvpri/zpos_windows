@@ -67,7 +67,7 @@ jobs:
         shell: bash
         working-directory: src-tauri
         run: |
-          SETUP="$(ls "target/release/bundle/nsis/Z1 Pos_${VERSION}_x64-setup.exe")"
+          SETUP="$(ls "target/release/bundle/nsis/Z1 Kasir_${VERSION}_x64-setup.exe")"
           echo "signing: $SETUP"
           cargo tauri signer sign \
             --private-key-path "${{ env.TAURI_SIGNING_PRIVATE_KEY_PATH }}" \
@@ -85,18 +85,18 @@ jobs:
         run: |
           mkdir -p dist && cd dist
           cp ../target/release/zpos-kasir.exe .
-          cp "../target/release/bundle/nsis/Z1 Pos_${VERSION}_x64-setup.exe" .
-          SIG="$(cat "../target/release/bundle/nsis/Z1 Pos_${VERSION}_x64-setup.exe.sig")"
+          cp "../target/release/bundle/nsis/Z1 Kasir_${VERSION}_x64-setup.exe" .
+          SIG="$(cat "../target/release/bundle/nsis/Z1 Kasir_${VERSION}_x64-setup.exe.sig")"
           # signature = RAW isi .sig (JANGAN re-encode); url = nama dotted (titik, bukan spasi)
           python - <<PY
           import json, datetime, os
           sig = "$SIG"
           version = "$VERSION"
-          dotted = "Z1.Pos_{}_x64-setup.exe".format(version)
+          dotted = "Z1.Kasir_{}_x64-setup.exe".format(version)
           assert " " not in dotted
           man = {
             "version": version,
-            "notes": "Z1 Pos v%s" % version,
+            "notes": "Z1 Kasir v%s" % version,
             "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "platforms": {"windows-x86_64": {
               "signature": sig,
@@ -128,8 +128,8 @@ jobs:
               -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\"}" "$API/releases" | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
           fi
           echo "release id=$REL_ID"
-          # upload nama asli (BERSIMPANG): GitHub render "Z1 Pos_..." jadi dotted
-          for f in "zpos-kasir.exe" "Z1 Pos_${VERSION}_x64-setup.exe" "latest.json"; do
+          # upload nama asli (BERSIMPANG): GitHub render "Z1 Kasir_..." jadi dotted
+          for f in "zpos-kasir.exe" "Z1 Kasir_${VERSION}_x64-setup.exe" "latest.json"; do
             NAME=$(basename "$f")
             # URL-encode spasi utk query param name (file setup punya spasi).
             NAME_ENC="${NAME// /%20}"
@@ -157,7 +157,7 @@ jobs:
             case " $NAMES " in *" $want "*) ;; *) echo "MISSING: $want"; exit 1;; esac
           done
           # setup exe (dotted di GitHub) harus ada
-          case " $NAMES " in *"Z1.Pos_${VERSION}_x64-setup.exe"*) ;; *) echo "MISSING setup"; exit 1;; esac
+          case " $NAMES " in *"Z1.Kasir_${VERSION}_x64-setup.exe"*) ;; *) echo "MISSING setup"; exit 1;; esac
           # validasi latest.json LOCAL (yg ku upload) — tak andalkan CDN eventual-consistency
           python - <<PY
           import json
@@ -166,6 +166,6 @@ jobs:
           assert d["version"]==v, (d.get("version"), v)
           s=d["platforms"]["windows-x86_64"]["signature"]
           assert s and s != "GANTI_INI_DENGAN_SIGNATURE_DARI_tauri_signer"
-          assert d["platforms"]["windows-x86_64"]["url"].endswith("Z1.Pos_%s_x64-setup.exe" % v)
+          assert d["platforms"]["windows-x86_64"]["url"].endswith("Z1.Kasir_%s_x64-setup.exe" % v)
           print("latest.json verified: version=%s sig-len=%d" % (v, len(s)))
           PY

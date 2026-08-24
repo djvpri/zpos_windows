@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Z1 Pos",
+  "productName": "Z1 Kasir",
   "version": "0.1.80",
   "identifier": "my.id.zpos.kasir.app",
   "build": {
@@ -9,7 +9,7 @@
   "app": {
     "windows": [
       {
-        "title": "Z1 Pos",
+        "title": "Z1 Kasir",
         "width": 1280,
         "height": 800,
         "minWidth": 1000,
