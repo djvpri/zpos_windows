@@ -265,6 +265,14 @@
       <div class="items" id="items"></div>
       <div class="summ">
         <div class="row"><span>Subtotal</span><span id="sub">Rp0</span></div>
+        <div class="row" style="align-items:center"><span>Diskon</span>
+          <span style="display:flex;align-items:center;gap:4px">Rp
+            <input id="dsc" type="text" inputmode="numeric" placeholder="0" value="0" maxlength="10"
+              style="width:90px;text-align:right;padding:4px 6px;border:1px solid #d6dce5;border-radius:6px;font-size:13px;font-family:inherit"
+              oninput="setDiskonManual(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" />
+            <button onclick="resetDiskon()" title="Hapus diskon" style="border:none;background:none;color:#b4552d;cursor:pointer;font-size:16px;padding:0 2px"><i class="bi bi-x-circle"></i></button>
+          </span>
+        </div>
         <div class="row total"><span>TOTAL</span><span id="total">Rp0</span></div>
       </div>
       <div class="paybtns">
@@ -585,6 +593,7 @@
 
   let cart = [];
   let metode = 'Tunai';
+  let diskonCart = 0;        // diskon MANUAL per transaksi (Rupiah), di-set via input keranjang
   let member = null;         // member aktif (obj member)
   let hargaMap = {};         // {produkId: hargaEfektif} utk member aktif
   let _tpTotal = 0;          // total transaksi utk modal pembayaran tunai
@@ -809,11 +818,17 @@
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const disc=0; // diskon total sengaja 0 (tidak ada diskon otomatis; harga member
-    // sudah diterapkan per-item lewat hargaMember). Tambah manual nanti di layar bayar.
+    // Diskon MANUAL (Rupiah) dari input keranjang. Clamp ke [0, subtotal] biar
+    // diskon tak negatif & tak melebihi total (cegah logika aneh / kembalian minus).
+    let disc=diskonCart;
+    if(!(disc>0)) disc=0;
+    if(disc>sub) disc=sub;
+    diskonCart=disc;
+    const dsc=document.getElementById('dsc');
+    if(dsc && document.activeElement!==dsc){ dsc.value = String(disc||0); }
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
-    document.getElementById('total').textContent=fmt(sub);
+    document.getElementById('total').textContent=fmt(sub-disc);
     document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
     const ph=document.getElementById('payHang'); if(ph) ph.disabled = !cart.length || !member;
     const aktif=bon.length;
@@ -825,7 +840,15 @@
     if(d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
   }
-  function clearCart(){ cart=[]; _tarikBon=null; _bonId=0; renderCart(); }
+  function clearCart(){ cart=[]; _tarikBon=null; _bonId=0; diskonCart=0; renderCart(); }
+
+  // Set diskon MANUAL (Rupiah) dari input keranjang. Clamp dilakukan renderCart.
+  function setDiskonManual(v){
+    const n=parseInt(String(v||'').replace(/\D/g,''),10)||0;
+    diskonCart=Math.max(0,n);
+    renderCart();
+  }
+  function resetDiskon(){ diskonCart=0; renderCart(); }
 
   // ===== Penjualan Lainnya (item/jasa harga bebas) =====
   // Ambil produk utk id keranjang: id asli → PRODUK, id virtual negatif → virtualProduk.
@@ -1038,12 +1061,13 @@
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
     // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const disc=0;
+    const disc=diskonCart;            // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
     const webProduk = {};
     cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
     const base = localStorage.getItem('zpos_base') || '';
     const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const save = (idx)=>{ bon[idx].nama=member.nama; bon[idx].items=cart.map(c=>({id:c.id,q:c.q})); bon[idx].total=sub-disc; simpanBonStorage(); };
+    const save = (idx)=>{ const b=bon[idx]; b.nama=member.nama; b.items=cart.map(c=>({id:c.id,q:c.q}));
+      b.subtotal=sub; b.diskon=disc; b.total=sub-disc; simpanBonStorage(); };
 
     // --- SIMPAN ULANG bon yang sedang ditarik (tarik → tambah item → simpan lagi) ---
     if(_tarikBon){
@@ -1082,7 +1106,7 @@
     }
 
     _bonId = 0; // mulai sesi bon baru
-    bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
+    bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), subtotal: sub, diskon: disc, total: sub-disc,
                no: ++_bonSeq,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonSeq();
@@ -1116,7 +1140,7 @@
       const h=src ? (hargaMember(it.id)||src.p) : 0;
       return { nama_produk:src?src.n:'', qty:it.q, subtotal:h*it.q };
     });
-    return { items:itemsFix, subtotal:b.total, diskon:0, total:b.total,
+    return { items:itemsFix, subtotal: b.subtotal!=null?b.subtotal:b.total, diskon: b.diskon||0, total:b.total,
              bayar:0, kembali:0, noTransaksi:'BON', metode:'BON (digantung)',
              kasir:kasirAktif.nama, member: b.nama || null, waktu:new Date().toLocaleString('id-ID') };
   }
@@ -1175,6 +1199,7 @@
     // (kosongkan keranjang), bon tetap ada di daftar — TIDAK hilang (fix data-loss).
     _tarikBon = b;               // referensi bon yang sedang ditarik ke keranjang
     _bonId = b.bonId || 0;       // utk tandai selesai + hapus saat bayar
+    diskonCart = b.diskon||0;    // pulihkan diskon manual bon (biar konsisten saat tambah item)
     // Restore member bon → biar tombol Gantung (simpan-ulang) bisa diklik DAN
     // harga member (hargaMap) benar. Bon menyimpan `nama` (nama member); cari
     // member id-nya di MEMBERS. Selalu timpa member (meski sudah terisi) — tarik
@@ -1256,7 +1281,7 @@
       if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
     const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
-    const diskon=0; // diskon total 0 (total = subtotal; konsisten dgn renderCart)
+    const diskon=diskonCart; // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
     const total=subtotal-diskon;
     // Tunai & QRIS/Transfer → alur beda. Tunai: tanya uang diterima & hitung
     // kembalian (modal). QRIS/Transfer: bayar = tepat total, tanpa kembalian.
@@ -1309,7 +1334,7 @@
       return { produk_id: c.id>0?c.id:null, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
     }).filter(Boolean);
     const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
-    const diskon=0; // diskon total 0 (total = subtotal; konsisten dgn renderCart)
+    const diskon=diskonCart; // diskon MANUAL dari input keranjang (total yg dibayar = subtotal-diskon, kalkulasi di bayar())
     const noTransaksi='TRX-'+Date.now().toString().slice(-8); // format noTrx() di web
     const payload={
       trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
