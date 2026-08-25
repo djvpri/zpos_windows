@@ -1915,8 +1915,24 @@
         .then(rel=>{
           if(!rel||!rel.tag_name) return;
           const latest=rel.tag_name.replace(/^v/,'');
+          const bar=document.getElementById('upBar'); if(!bar) return;
+          // Deteksi "update tak menimpa exe ini": sebelumnya user menargetkan
+          // versi X (izpos_last_update_target) tapi app masih di versi lebih
+          // lama → kemungkinan dua instalasi/shortcut nunjuk exe lain. Kasih
+          // banner explicte pengganti yg cuma "update tersedia", supaya tak
+          // diam-diam kelihatan "kembali versi lama".
+          let target='';
+          try{ target=localStorage.getItem('zpos_last_update_target')||''; }catch(e){}
+          if(target && semverAtas(target, local)){
+            document.getElementById('upTxt').textContent='App masih v'+local+' — update v'+target+' tak menimpa exe ini. Buka app dari shortcut/Start Menu, atau unduh manual.';
+            const exe=(rel.assets||[]).find(a=>a.name==='zpos-kasir.exe');
+            document.getElementById('upBtn').onclick=()=>{
+              if(exe) tinv('buka_url',{url:exe.browser_download_url}).catch(()=>{});
+            };
+            bar.classList.remove('hidden');
+            return;
+          }
           if(semverAtas(latest,local)){
-            const bar=document.getElementById('upBar'); if(!bar) return;
             document.getElementById('upTxt').textContent='Update v'+latest+' tersedia';
             const exe=(rel.assets||[]).find(a=>a.name==='zpos-kasir.exe');
             document.getElementById('upBtn').onclick=()=>{
@@ -1934,6 +1950,11 @@
   // swap + relaunch di lokasi lama, lalu keluar app biar cmd menerapkan.
   async function doUpdate(url, latest){
     if(!url){ toast('Asset update tak ditemukan'); return; }
+    // Catat target versi YANG HENDAK di-install. Saat app restart, bila versi
+    // aktual masih di bawah target ini → tanda swap/NSIS tak menimpa exe yang
+    // dibuka (salinan lama dua jalur) → kasih banner explicite pengganti yg
+    // cuma "update tersedia". Persist utk baca setelah restart.
+    try{ localStorage.setItem('zpos_last_update_target', latest); }catch(e){}
     const btn=document.getElementById('upBtn');
     btn.disabled=true; btn.textContent='Mengunduh...';
     try{
