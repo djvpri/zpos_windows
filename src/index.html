@@ -1167,11 +1167,13 @@
     // (kosongkan keranjang), bon tetap ada di daftar — TIDAK hilang (fix data-loss).
     _tarikBon = b;               // referensi bon yang sedang ditarik ke keranjang
     _bonId = b.bonId || 0;       // utk tandai selesai + hapus saat bayar
-    // Restore member bon → biar tombol Gantung (simpan-ulang) bisa diklik.
-    // Bon menyimpan `nama` (nama member); cari member id-nya di MEMBERS supaya
-    // harga member (hargaMap) ikut benar. Kalau tak ketemu (member lama/hapus)
-    // biarkan member null → simpan-ulang minta pilih member (safety).
-    if(!member){
+    // Restore member bon → biar tombol Gantung (simpan-ulang) bisa diklik DAN
+    // harga member (hargaMap) benar. Bon menyimpan `nama` (nama member); cari
+    // member id-nya di MEMBERS. Selalu timpa member (meski sudah terisi) — tarik
+    // bon = edit cart utk bon itu, jadi member harus mengikuti bon tsb, bukan
+    // member yg lagi terpilih dr transaksi lain. Kalau tak ketemu (member lama/
+    // hapus) biarkan nama bon, harga member ke 0 → tak salah-hitung dgn member lain.
+    {
       const found=(MEMBERS||[]).find(m=>(m.nama||'').toLowerCase()===(b.nama||'').toLowerCase());
       if(found) await pilihMember(found.id);
     }
