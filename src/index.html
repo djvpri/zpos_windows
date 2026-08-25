@@ -364,7 +364,7 @@
   <div class="mc">
     <div class="mch"><span><i class="bi bi-gear"></i> Sinkron ke Server Z1 Kasir</span><span class="x" onclick="tutupSet()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb">
-      <div class="fld"><label>Base URL server Z1 Kasir</label><input id="setUrl" placeholder="https://zpos.zomet.my.id" /></div>
+      <div class="fld"><label>Base URL server Z1 Kasir</label><input id="setUrl" placeholder="https://z1pos.zomet.my.id" /></div>
 
       <!-- Setup toko (email admin) DIPERLUKAN hanya saat pertama / belum pernah
            setup (belum ada lisensi/token). Setelah itu cukup tombol Simpan & Sinkron. -->
@@ -2052,7 +2052,7 @@
   function openSet(){
     refreshErrLog();  // tampilkan log error terbaru saat modal dibuka
     muatLogDir();     // isi input lokasi folder log
-    document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://zpos.zomet.my.id';
+    document.getElementById('setUrl').value = localStorage.getItem('zpos_base') || 'https://z1pos.zomet.my.id';
     muatPrinterOpts();  // isi dropdown printer aktif
     const lac=document.getElementById('setLaciCetak'); if(lac) lac.checked = laciCetakAktif();
     document.getElementById('setModal').classList.add('show');
