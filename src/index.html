@@ -1124,7 +1124,7 @@
       : bon.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm">${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <div class="info"><div class="nm"><b style="color:#ffb347">#${b.bonId||(x+1)}</b> · ${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
           <button onclick="tarikBon(${x})">Tarik</button>
           <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
