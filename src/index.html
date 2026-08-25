@@ -1527,6 +1527,12 @@
     if(d.footerPowered){ B.push('\x1ba\x01Powered by Z1 Pos\n'); }
     B.push('\x1ba\x00\n\n\n');
     B.push('\x1dV\x42'); // cut partial
+    // Reset printer (ESC @) DI AKHIR job nota. Tanpa ini byte state/code-page dari
+    // job sebelumnya (pulsa laci `ESC p` yg dikirim TERPISAH oleh cetakSpooler
+    // sebelum nota) bisa bocor & nempel ke cetak berikutnya — cirinya karakter
+    // nyasar (mis 'p') sebelum nama toko sejak cetak ke-2 (cetak pertama bersih
+    // krn printer baru power-on).
+    B.push('\x1b@');
     return B.join('');
   }
   // Cetak via spooler: auto-pilih printer. Simpan pilihan di localStorage biar
@@ -1605,6 +1611,7 @@
     center('*** SELESAI ***');
     B.push('\x1ba\x00\n\n\n');
     B.push('\x1dV\x42'); // cut partial
+    B.push('\x1b@'); // reset printer (konsisten dgn nota: cegah state bocor antar job)
     return B.join('');
   }
   // Isi select 'prPick' di modal pilih printer (C) dr daftar printer Windows.
