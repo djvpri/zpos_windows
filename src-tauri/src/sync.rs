@@ -1015,6 +1015,25 @@ impl SyncClient {
         r.get("id").and_then(|v| v.as_i64()).ok_or_else(|| "server tak kembalikan bon id".into())
     }
 
+    /// Ubah isi bon yang sudah ada di server (`PATCH /api/bon/{id}`). Dipakai
+    /// kasir saat bon ditarik → ditambah item → disimpan ulang. `produk` = FULL
+    /// daftar item final ({"<produk_id>": qty}); web hitung delta stok-hold.
+    /// 404 = bon tak ada → anggap gagal (kasir jangan timpa lokal tanpa server).
+    pub fn edit_bon(&self, bon_id: i64, produk: &str, total: i64) -> Result<(), String> {
+        let body: Value = serde_json::json!({
+            "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
+            "total": total,
+        });
+        let resp = self.http.patch(self.endpoint(&format!("/api/bon/{bon_id}")))
+            .header("Cookie", self.auth_cookie())
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("edit bon {bon_id}: {}", self.err_detail(resp)));
+        }
+        Ok(())
+    }
+
     /// Tandai bon selesai (dibayar) di server (`PATCH /api/bon/{id}`) biar tak
     /// mengambang aktif di tab Bon web saat bayar lewat windows.
     pub fn tandai_bon_selesai(&self, bon_id: i64) -> Result<(), String> {

@@ -1018,21 +1018,60 @@
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
-    _bonId = 0; // mulai sesi bon baru
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
     // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=0;
+    const webProduk = {};
+    cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
+    const base = localStorage.getItem('zpos_base') || '';
+    const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const save = (idx)=>{ bon[idx].nama=member.nama; bon[idx].items=cart.map(c=>({id:c.id,q:c.q})); bon[idx].total=sub-disc; simpanBonStorage(); };
+
+    // --- SIMPAN ULANG bon yang sedang ditarik (tarik → tambah item → simpan lagi) ---
+    if(_tarikBon){
+      const b = _tarikBon;
+      const idx = bon.indexOf(b);
+      if(idx<0){ _tarikBon=null; _bonId=0; }
+      else{
+        // Item virtual (id negatif) dari cart tsb + items lama uda tergabung di cart
+        // (tarikBon restore items bon ke cart). vmap pertahankan milik bon lama.
+        if(webProduk) b.vmap = Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]]));
+        save(idx);
+        renderBonList();
+        // Web: update FULL isi bon (delta stok hold = item baru). Kalau bonId=0
+        // (belum pernah masuk web) → create baru via kirim_bon.
+        if(zposIsTauri() && Object.keys(webProduk).length){
+          if(b.bonId>0){
+            tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: sub-disc })
+              .then(()=>{})
+              .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','edit_bon gagal bonId='+b.bonId+' | '+String(m)); });
+          } else {
+            tinv('kirim_bon',{ baseUrl:base, nama: member.nama, produk: JSON.stringify(webProduk), total: sub-disc })
+              .then(serverId=>{ b.bonId=serverId; simpanBonStorage(); })
+              .catch(()=>{});
+          }
+        }
+        // lepas ref tarik — bon tetap di daftar, isi sudah diperbarui
+        _tarikBon=null; _bonId=0;
+        notaTerakhir = buildNotaBon(idx);
+        toast('Bon diperbarui: total '+bon[idx].total.toLocaleString('id-ID'));
+        document.getElementById('bonCetakTxt').innerHTML =
+          'Bon <b>'+bon[idx].total.toLocaleString('id-ID')+'</b> diperbarui (tambah item) utk <b>'+escH(member.nama)+'</b>.<br>Tampilkan / cetak nota bon?';
+        document.getElementById('bonCetakModal').classList.add('show');
+        clearCart();
+        return;
+      }
+    }
+
+    _bonId = 0; // mulai sesi bon baru
     bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
     // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
     // (id>0) — web bon butuh ref produk; item virtual (id negatif) tetap lokal.
-    const webProduk = {};
-    cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
     if(zposIsTauri() && Object.keys(webProduk).length){
       const idx = bon.length-1;
-      const base = localStorage.getItem('zpos_base') || '';
       // WAJIB kirim baseUrl: Rust fn kirim_bon butuh arg base_url; kalau nggak,
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
@@ -1044,7 +1083,6 @@
     // Siapkan nota bon utk opsi cetak (header BON, belum lunas). Set notaTerakhir
     // supaya tombol Cetak Nota (spooler/HTML) reuse alur yg sama dgn nota biasa.
     notaTerakhir = buildNotaBon(bon.length-1);
-    const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('bonCetakTxt').innerHTML =
       'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(member.nama)+'</b> digantung.<br>Tampilkan / cetak nota bon?';
     document.getElementById('bonCetakModal').classList.add('show');

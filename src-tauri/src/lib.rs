@@ -513,6 +513,24 @@ fn kirim_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, na
     r
 }
 
+// Ubah isi bon yang sudah ada di server (tarik→tambah item→simpan ulang) →
+// PATCH /api/bon/{id} body { produk, total }. Web hitung delta stok-hold utk item baru.
+#[tauri::command]
+fn edit_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64, produk: String, total: i64) -> Result<(), String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.edit_bon(bon_id, &produk, total);
+    match &r {
+        Ok(()) => submit_log(&app, &format!("bon #{bon_id} diubah isinya di server")),
+        Err(e) => submit_log(&app, &format!("edit bon #{bon_id} GAGAL: {e}")),
+    }
+    r
+}
+
 // Tandai bon selesai (dibayar via windows) → PATCH /api/bon/{id}.
 #[tauri::command]
 fn tandai_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64) -> Result<(), String> {
@@ -1124,7 +1142,7 @@ fn run() {
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi, ambil_bon_sync,
             buka_shift, tutup_shift, ambil_shift,
             saldo_shift, saldo_shift_offline, kirim_kas_keluar, daftar_kas_keluar,
-            kirim_bon, tandai_bon, hapus_bon
+            kirim_bon, edit_bon, tandai_bon, hapus_bon
         ])
         .run(tauri::generate_context!())
         .expect("gagal menjalankan ZPos Kasir");
