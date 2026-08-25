@@ -1299,7 +1299,7 @@
     // Catatan: TIDAK menyimpan data sensitif — cuma struk (item, harga, total).
     notaTerakhir = { items, subtotal, diskon, total, bayar, kembali,
                      noTransaksi, metode, kasir:kasirAktif.nama,
-                     member: member?.nama || null,
+                     member: member?.n || null,
                      waktu:new Date().toLocaleString('id-ID') };
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
@@ -1378,7 +1378,9 @@
       while(s.length>32){ center(s.slice(0,32)); s=s.slice(32); }
       if(s) center(s);
     };
-    const divider= d.dividerSolid ? '--------------------------------' : '- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -';
+    const _solid='--------------------------------';                          // 32 char solid
+    const _dashed='- - - - - - - - - - - - - - - -'.slice(0,32);            // ≤32 char, tak wrap → 1 baris
+    const divider= d.dividerSolid ? _solid : _dashed;
     const blokInfo=[n.noTransaksi, n.waktu];
     if(d.showKsr) blokInfo.push(n.kasir);
     const infoLeft=()=>{ left('No : '+esc(blokInfo[0])); left('Tgl: '+esc(blokInfo[1])); if(blokInfo[2]) left('Ksr: '+esc(blokInfo[2])); if(n.member) left('Mbr: '+esc(n.member)); left('Pay: '+esc(n.metode)); };
