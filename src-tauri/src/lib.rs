@@ -372,6 +372,8 @@ struct Lisensi {
     #[serde(default)]
     catatan_struk: String,
     #[serde(default)]
+    desain_nota: String,
+    #[serde(default)]
     plan: String,
     #[serde(default)]
     aktif: bool,

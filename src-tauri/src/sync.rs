@@ -393,6 +393,7 @@ impl SyncClient {
         let mut alamat = String::new();
         let mut telepon = String::new();
         let mut catatan_struk = String::new();
+        let mut desain_nota = String::new();
         {
             let pr = self.http.get(self.endpoint("/api/pengaturan"))
                 .header("Cookie", self.auth_cookie())
@@ -400,16 +401,22 @@ impl SyncClient {
             if let Ok(pre) = pr {
                 if pre.status().is_success() {
                     #[derive(Deserialize)]
-                    struct Pr { #[serde(default)] alamat: String, #[serde(default)] telepon: String, #[serde(default)] catatan_struk: String }
+                    struct Pr {
+                        #[serde(default)] alamat: String,
+                        #[serde(default)] telepon: String,
+                        #[serde(default)] catatan_struk: String,
+                        #[serde(default)] desain_nota: String,
+                    }
                     if let Ok(p) = pre.json::<Pr>() {
                         alamat = p.alamat; telepon = p.telepon; catatan_struk = p.catatan_struk;
+                        desain_nota = p.desain_nota;
                     }
                 }
             }
         }
         let v = serde_json::json!({
             "nama": me.nama, "alamat": alamat, "telepon": telepon,
-            "catatan_struk": catatan_struk,
+            "catatan_struk": catatan_struk, "desain_nota": desain_nota,
             "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
             "langganan_sampai": me.langganan_sampai,
         }).to_string();
