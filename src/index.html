@@ -1152,7 +1152,7 @@
     renderBonList();
     document.getElementById('bonModal').classList.add('show');
   }
-  function tarikBon(x){
+  async function tarikBon(x){
     const b=bon[x];
     if(b.lunasPending){ toast('Bon sudah dibayar — menunggu sinkron tanda lunas'); return; }
     if(b.hapusPending){ toast('Bon sedang dihapus — menunggu sinkron'); return; }
@@ -1167,6 +1167,14 @@
     // (kosongkan keranjang), bon tetap ada di daftar — TIDAK hilang (fix data-loss).
     _tarikBon = b;               // referensi bon yang sedang ditarik ke keranjang
     _bonId = b.bonId || 0;       // utk tandai selesai + hapus saat bayar
+    // Restore member bon → biar tombol Gantung (simpan-ulang) bisa diklik.
+    // Bon menyimpan `nama` (nama member); cari member id-nya di MEMBERS supaya
+    // harga member (hargaMap) ikut benar. Kalau tak ketemu (member lama/hapus)
+    // biarkan member null → simpan-ulang minta pilih member (safety).
+    if(!member){
+      const found=(MEMBERS||[]).find(m=>(m.nama||'').toLowerCase()===(b.nama||'').toLowerCase());
+      if(found) await pilihMember(found.id);
+    }
     renderBonList();
     document.getElementById('bonModal').classList.remove('show');
     toast('Bon ditarik. Bayar utk coret dari daftar.');
