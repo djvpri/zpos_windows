@@ -572,9 +572,9 @@
     {id:10,n:'Pudding',e:'bi-box',p:6000,s:0},{id:11,n:'Es Krim',e:'bi-thermometer-snow',p:11000,s:22},{id:12,n:'Air Mineral',e:'bi-droplet',p:4000,s:200},
   ];
   const DEMO_MEMBERS = [
-    {id:1,n:'Syahrul', k:'Prioritas', d:0, tetap:{2:10500,5:8500}},
-    {id:2,n:'Bu Rina',  k:'Palapa',    d:-15},
-    {id:3,n:'Pak Joko', k:'Loyal',     d:10},
+    {id:1,nama:'Syahrul', k:'Prioritas', d:0, tetap:{2:10500,5:8500}},
+    {id:2,nama:'Bu Rina',  k:'Palapa',    d:-15},
+    {id:3,nama:'Pak Joko', k:'Loyal',     d:10},
   ];
   const DEMO_HARGA = { 2: {1:10500,5:8500}, 3: {}, 5: {} }; // {memberId:{produkId:harga}} utk demo
 
@@ -924,7 +924,7 @@
       // harga tetap/markup hardcode. Warna tetap by arah diskon: markup→merah,
       // diskon→hijau. Member tanpa kategori → 'harga tetap'.
       const tag = `<span class="tag ${d<0?'hitam':'murah'}">${m.k||'harga tetap'}</span>`;
-      return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.n}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
+      return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.nama}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
     }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
   }
   /* ===== Tambah member (kasir daftarkan pelanggan, butuh online) ===== */
@@ -976,7 +976,7 @@
         // Tarik member terbaru dari DB ke MEMBERS biar langsung tampil di daftar
         // pilih (dgn diskon kategori). Gagal → daftar tetap seperti sebelumnya.
         tinv('list_member').then(mis=>{
-          MEMBERS = mis.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
+          MEMBERS = mis.map(x=>({id:x.id, nama:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
           renderMemberList();
         }).catch(()=>renderMemberList());
       })
@@ -999,9 +999,9 @@
     }
     member=m;
     document.getElementById('memberPill').classList.add('on');
-    document.getElementById('memberPillTxt').textContent=m.n+' · '+(m.k||'Member');
+    document.getElementById('memberPillTxt').textContent=m.nama+' · '+(m.k||'Member');
     document.getElementById('mwin').classList.remove('show');
-    toast('Member: '+m.n);
+    toast('Member: '+m.nama);
     renderCart();
   }
   function lepasMember(){
@@ -1023,7 +1023,7 @@
     // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const disc=0;
-    bon.push({ nama: member.n, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
+    bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
     // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
@@ -1036,17 +1036,17 @@
       // WAJIB kirim baseUrl: Rust fn kirim_bon butuh arg base_url; kalau nggak,
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
-      tinv('kirim_bon',{ baseUrl:base, nama: member.n, produk: JSON.stringify(webProduk), total: sub-disc })
+      tinv('kirim_bon',{ baseUrl:base, nama: member.nama, produk: JSON.stringify(webProduk), total: sub-disc })
         .then(serverId=>{ bon[idx].bonId=serverId; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
         .catch(()=>{}); // offline → tetap lokal, tak masuk web
     }
-    toast('Bon digantung atas nama '+member.n);
+    toast('Bon digantung atas nama '+member.nama);
     // Siapkan nota bon utk opsi cetak (header BON, belum lunas). Set notaTerakhir
     // supaya tombol Cetak Nota (spooler/HTML) reuse alur yg sama dgn nota biasa.
     notaTerakhir = buildNotaBon(bon.length-1);
     const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('bonCetakTxt').innerHTML =
-      'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(member.n)+'</b> digantung.<br>Tampilkan / cetak nota bon?';
+      'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(member.nama)+'</b> digantung.<br>Tampilkan / cetak nota bon?';
     document.getElementById('bonCetakModal').classList.add('show');
     clearCart();
   }
@@ -1299,7 +1299,7 @@
     // Catatan: TIDAK menyimpan data sensitif — cuma struk (item, harga, total).
     notaTerakhir = { items, subtotal, diskon, total, bayar, kembali,
                      noTransaksi, metode, kasir:kasirAktif.nama,
-                     member: member?.n || null,
+                     member: member?.nama || null,
                      waktu:new Date().toLocaleString('id-ID') };
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
@@ -1557,7 +1557,7 @@
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
       PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null}));
-      MEMBERS = m.map(x=>({id:x.id, n:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
+      MEMBERS = m.map(x=>({id:x.id, nama:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');
     }catch(e){ PRODUK=DEMO_PRODUK; MEMBERS=DEMO_MEMBERS; toast('Mode demo (DB belum siap)'); }
