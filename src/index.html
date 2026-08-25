@@ -316,7 +316,8 @@
     <div class="mch"><span><i class="bi bi-trash3"></i> Hapus Bon Gantung</span><span class="x" onclick="tutupKonfBon()"><i class="bi bi-x-lg"></i></span></div>
     <div class="mcb">
       <p id="konfBonTxt" style="font-size:13px;color:#3b4658;margin:0 0 12px">Hapus bon gantung ini? Isi keranjang bon akan hilang dan tidak bisa dikembalikan.</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
+      <div class="fld"><label>PIN kasir (verifikasi)</label><input id="hapusBonPin" type="password" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off" onkeydown="if(event.key==='Enter')konfirmasiHapusBon()" oninput="this.value=this.value.replace(/\D/g,'')" /></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
         <button class="sbtn" style="background:#e3e6ea;color:#3b4658" onclick="tutupKonfBon()">Batal</button>
         <button class="sbtn" id="konfBonBtn" style="background:#c62828" onclick="konfirmasiHapusBon()"><i class="bi bi-trash3"></i> Hapus</button>
       </div>
@@ -972,6 +973,13 @@
     const katId=kat ? Number(kat) : null;
     const msg=document.getElementById('amMsg');
     if(!nama){ msg.textContent='Nama member wajib diisi'; return; }
+    // Nama member per toko unik (case-insensitive) — blokir duplikat di lokal
+    // dulu (daftar MEMBERS yg uda di-pull), biar user dapat pesan jelas tanpa
+    // nunggu balasan server. Server tetap enforce (member route: 400).
+    if((MEMBERS||[]).some(m=>(m.nama||'').toLowerCase()===nama.toLowerCase())){
+      msg.textContent='Nama member sudah dipakai. Pakai nama lain / pilih member tsb di daftar.';
+      return;
+    }
     if(offline){ msg.textContent='Offline. Daftarkan member saat terhubung ke server.'; return; }
     if(!zposIsTauri()){ msg.textContent='Mode demo — tak ada server.'; return; }
     const base=localStorage.getItem('zpos_base');
@@ -1185,9 +1193,22 @@
   let _bonHapusIdx = -1;
   let _bonId = 0;         // id bon server yang sedang ditarik → ditandai selesai saat bayar
   let _tarikBon = null;   // referensi objek bon yang sedang ditarik ke keranjang (belum bayar)
-  function hapusBon(x){ _bonHapusIdx = x; document.getElementById('konfBonModal').classList.add('show'); }
+  function hapusBon(x){ _bonHapusIdx = x; const pi=document.getElementById('hapusBonPin'); if(pi) pi.value=''; document.getElementById('konfBonModal').classList.add('show'); }
   function tutupKonfBon(){ document.getElementById('konfBonModal').classList.remove('show'); }
-  function konfirmasiHapusBon() {
+  async function konfirmasiHapusBon() {
+    // Verifikasi ulang PIN kasir aktif sebelum aksi destruktif (hapus bon). Reuse
+    // login_pin (bcrypt lokal, offline-mampu) — PIN tak disimpan plaintext.
+    if(kasirAktif && kasirAktif.id && zposIsTauri()){
+      const pin=document.getElementById('hapusBonPin').value;
+      if(!pin || pin.length!==6){ toast('Masukkan PIN kasir (6 angka)'); return; }
+      const btn=document.getElementById('konfBonBtn'); if(btn) btn.disabled=true;
+      let ok=false;
+      try{ ok=await tinv('login_pin',{userId:kasirAktif.id, pin}); }catch(e){ logErr('BON','verif PIN hapus bon gagal: '+(e&&e.message?e.message:e)); }
+      if(btn) btn.disabled=false;
+      if(!ok){ toast('PIN salah — hapus bon dibatalkan'); return; }
+    } else if(!kasirAktif || !kasirAktif.id){
+      toast('Masuk pilih kasir dulu'); return;
+    }
     const x = _bonHapusIdx;
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
     const b = bon[x];
