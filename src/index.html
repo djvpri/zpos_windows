@@ -244,6 +244,7 @@
             <div class="mhead" style="display:flex;justify-content:space-between;align-items:center">PILIH MEMBER
               <button onclick="bukaAddMember()" title="Daftarkan member baru" style="background:#4f7cff;color:#fff;border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer"><i class="bi bi-person-plus"></i> Baru</button>
             </div>
+            <input id="cariMember" oninput="_cM=this.value.toLowerCase();renderMemberList()" placeholder="Cari nama member…" style="width:100%;padding:8px 10px;border:1px solid #d6dce5;border-radius:8px;margin-bottom:8px;font-size:13px;background:#f8fafc;outline:none" />
             <div id="mList"></div>
           </div>
         </div>
@@ -303,6 +304,7 @@
 <div class="modal" id="bonModal">
   <div class="mc">
     <div class="mch"><span><i class="bi bi-list-ul"></i> Bon Gantung</span><span class="x" onclick="tutupBon()"><i class="bi bi-x-lg"></i></span></div>
+    <input id="cariBon" oninput="_cB=this.value.toLowerCase();renderBonList()" placeholder="Cari nama / nomor bon…" style="width:100%;padding:8px 10px;border:1px solid #d6dce5;border-radius:8px;margin-bottom:8px;font-size:13px;background:#f8fafc;outline:none" />
     <div class="mcb" id="bonList"></div>
   </div>
 </div>
@@ -558,6 +560,8 @@
   // Diluar Tauri (browser preview) dipakai data demo supaya layar tetap kebayang.
   let PRODUK = [];
   let MEMBERS = [];
+  let _cM = '';              // kata kunci cari member
+  let _cB = '';              // kata kunci cari bon (nama / nomor)
   let merchantHub = null; // {token, base_url, ...}
   let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
   // Info toko utk header nota (cached dr `ambil_lisensi`/sync): nama, alamat,
@@ -600,6 +604,9 @@
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, items, total, vmap, bonId}
   const LS_BON = 'zpos_bon'; // persist bon lokal (tahan restart app)
+  let _bonSeq = 0;           // penomoran bon LOKAL stabil (utk bon yg belum dapat id server)
+  try { _bonSeq = parseInt(localStorage.getItem('zpos_bon_seq')) || 0; } catch(e){}
+  const simpanBonSeq = ()=>{ try { localStorage.setItem('zpos_bon_seq', String(_bonSeq)); } catch(e){} };
   // Restore bon gantung dari penyimpanan lokal — sebelumnya bon cuma in-memory
   // (`let bon=[]`), jadi restart app = bon HILANG kalau belum pernah tersync ke server.
   // Item bon berisi id produk nyata + qty; kalau produk uda berubah (id tak ada lagi
@@ -918,14 +925,16 @@
   /* ===== Member ===== */
   function toggleMember(){ document.getElementById('mwin').classList.toggle('show'); }
   function renderMemberList(){
-    document.getElementById('mList').innerHTML = MEMBERS.map(m=>{
+    const kw=_cM.trim();
+    const list=kw?MEMBERS.filter(m=>(m.nama||'').toLowerCase().includes(kw)):MEMBERS;
+    document.getElementById('mList').innerHTML = list.map(m=>{
       const d=(m.d||0);
       // Chip tampil nama kategori member (server-authoritative), bukan label
       // harga tetap/markup hardcode. Warna tetap by arah diskon: markup→merah,
       // diskon→hijau. Member tanpa kategori → 'harga tetap'.
       const tag = `<span class="tag ${d<0?'hitam':'murah'}">${m.k||'harga tetap'}</span>`;
       return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.nama}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
-    }).join('') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
+    }).join('') + (list.length===0 ? `<div class="mitem" style="color:#98a2b3"><i class="bi bi-search"></i><div class="info"><div class="nm">Tidak ada member cocok</div></div></div>` : '') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
   }
   /* ===== Tambah member (kasir daftarkan pelanggan, butuh online) ===== */
   function bukaAddMember(){
@@ -1066,7 +1075,9 @@
 
     _bonId = 0; // mulai sesi bon baru
     bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), total: sub-disc,
+               no: ++_bonSeq,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
+    simpanBonSeq();
     simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
     // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
     // (id>0) — web bon butuh ref produk; item virtual (id negatif) tetap lokal.
@@ -1119,14 +1130,22 @@
     // merge, dll yg hanya panggil renderBonList). YAGNI: update di sini, sumber tunggal.
     const bb=document.getElementById('bonBadge');
     if(bb) bb.innerHTML = bon.length?`<span class="badge">${bon.length}</span>`:'';
-    el.innerHTML = bon.length===0
-      ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.</p>`
-      : bon.map((b,x)=>`
+    const kw=_cB.trim();
+    const list=kw
+      ? bon.filter(b=>{
+          const noNomor = String(b.bonId||b.no||0);
+          const nama=(b.nama||'').toLowerCase();
+          return nama.includes(kw) || noNomor.includes(kw);
+        })
+      : bon;
+    el.innerHTML = list.length===0
+      ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">${bon.length===0?'Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.':'Tidak ada bon cocok dgn pencarian.'}</p>`
+      : list.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm"><b style="color:#ffb347">#${b.bonId||(x+1)}</b> · ${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
-          <button onclick="tarikBon(${x})">Tarik</button>
-          <span class="del" onclick="hapusBon(${x})" title="Hapus"><i class="bi bi-trash3"></i></span>
+          <div class="info"><div class="nm"><b style="color:#ffb347">#${b.bonId||('L'+(b.no||x+1))}</b> · ${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <button onclick="tarikBon(${bon.indexOf(b)})">Tarik</button>
+          <span class="del" onclick="hapusBon(${bon.indexOf(b)})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
   }
   function bukaBon(){
