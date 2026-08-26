@@ -2368,6 +2368,10 @@
   document.getElementById('setBtn')?.addEventListener('click',saveSet);
   document.getElementById('setModal')?.addEventListener('click',e=>{ if(e.target.id==='setModal') tutupSet(); });
   status();
+  // Migrasi base URL sekali di init: domain server lama zpos.zomet.my.id pindah
+  // ke z1pos.zomet.my.id. Auto-replace kalau nilai tersimpan masih domain lama,
+  // biar existing device sinkron ke server baru tanpa buka setelan.
+  { const _b=localStorage.getItem('zpos_base'); if(_b && _b.indexOf('zpos.zomet.my.id')>=0){ localStorage.setItem('zpos_base', _b.replace('zpos.zomet.my.id','z1pos.zomet.my.id')); logErr('SETUP','migrasi zpos_base: '+_b+' → '+localStorage.getItem('zpos_base')); } }
   // Auto-sinkron adaptif via recursive setTimeout (bukan setInterval) supaya
   // interval bisa berubah mengikuti status: online → 60s, offline → naik bertahap
   // (autoRetryMs 10s→30s→60s, kelola di autoSync). Guard `syncing` cegah overlap.

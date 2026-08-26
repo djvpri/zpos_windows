@@ -14,7 +14,7 @@ Portable — tak perlu install, simpan di mana saja.
 
 1. Buka app. Klik **Setelan** (ikon gear) atau tombol **Sinkron**.
 2. Isi:
-   - **Base URL**: `https://zpos.zomet.my.id`
+   - **Base URL**: `https://z1pos.zomet.my.id`
    - **Token**: token akses ZPos (mengenali toko & hak kasir).
 3. **Simpan & Sinkron** → unduh katalog produk + kategori + member ke perangkat.
 
