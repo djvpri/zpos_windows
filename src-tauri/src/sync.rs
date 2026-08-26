@@ -198,8 +198,8 @@ impl SyncClient {
         format!("zpos_token={}", self.token)
     }
 
-    // Pesan error diagnosa: status + sampel body server (biar ketahuan 401/404/500 & pesannya).
-    // Mengambil resp by value (resp.text() consume) — panggil HANYA di branch return.
+    // Pesan error diagnosa: base server + status + sampel body server (biar
+    // ketahuan 401/404/500, endpoint mana, & pesannya). Panggil HANYA di return.
     fn err_detail(&self, resp: reqwest::blocking::Response) -> String {
         let status = resp.status();
         let body = match resp.text() {
@@ -209,7 +209,11 @@ impl SyncClient {
             }
             Err(_) => String::new(),
         };
-        if body.is_empty() { format!("HTTP {status}") } else { format!("HTTP {status}: {body}") }
+        // Catatan: body `null` dgn 401 = endpoint auth-token (/api/auth/me) menolak
+        // token_jwt (stale/JWT_SECRET beda) — bukan kredensial salah. Body JSON error
+        // (mis "Email atau password salah") = kredensial. base ikut utk identifikasi server.
+        if body.is_empty() { format!("HTTP {status} @ {}", self.base) }
+        else { format!("HTTP {status} @ {}: {body}", self.base) }
     }
 
     // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang

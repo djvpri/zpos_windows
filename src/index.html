@@ -2165,8 +2165,12 @@
     }
     localStorage.setItem('zpos_base', base);
     tutupSet();
-    if(!sudahSetup){
-      // Setup pertama: login admin → tarik karyawan + token (sudah disimpan Rust di meta).
+    // Kalau user isi email+pass → SELALU setup_kasir (refresh token_jwt), walau
+    // app sudah pernah setup. Diperlukan saat server pindah/JWT_SECRET ganti
+    // (token_jwt lama invalid → sync_remote 401 "Unathorized: null") — isi ulang
+    // em+pass satu-satunya cara tarik token fresh dari server baru.
+    if(!sudahSetup || (email && pass)){
+      // Setup / re-auth: login admin → tarik karyawan + token (disimpan Rust di meta).
       toast('Menyiapkan toko & tarik karyawan...');
       try{
         const r=await tinv('setup_kasir',{baseUrl:base,email,password:pass});
@@ -2180,7 +2184,7 @@
         showErr('Setup gagal: '+m); logErr('SETUP', 'saveSet setup gagal: '+m); return;
       }
     }
-    // Sudah setup → cukup sinkron dengan token tersimpan.
+    // Sudah setup & TANPA em+pass → cukup sinkron dengan token tersimpan.
     toast('Menyinkron...');
     return tinv('sync_remote',{baseUrl:base, token:''})
       .then(r=>{ toast('Sinkron OK: '+r); initKasir(); })
