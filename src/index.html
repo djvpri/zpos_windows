@@ -117,8 +117,8 @@
   .member .pill:hover { border-color:#4f7cff; color:#4f7cff; }
   .member .pill.on { background:#e7f6ec; border-color:#34a853; color:#1e7d33; }
   .member .pill i { font-size:14px; }
-  .member .mwin { position:absolute; top:calc(100%+6px); left:0; width:240px; background:#fff; border:1px solid #eef0f4; border-radius:12px; box-shadow:0 12px 34px rgba(0,0,0,.14); z-index:30; display:none; overflow:hidden; }
-  .member .mwin.show { display:block; }
+  .member .mwin { position:absolute; top:calc(100%+6px); left:0; width:240px; background:#fff; border:1px solid #eef0f4; border-radius:12px; box-shadow:0 12px 34px rgba(0,0,0,.14); z-index:30; display:none; overflow:hidden; max-height:72vh; }
+  .member .mwin.show { display:flex; flex-direction:column; }   #mList { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
   .mwin .mhead { padding:10px 12px; font-size:12px; font-weight:700; color:#1e2f4d; background:#f7f9fc; }
   .mwin .mitem { display:flex; align-items:center; gap:9px; padding:10px 12px; cursor:pointer; font-size:13px; }
   .mwin .mitem:hover { background:#f3f6fc; }
@@ -147,7 +147,7 @@
   .modal .mch { padding:14px 18px; font-weight:700; color:#1e2f4d; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f0f2f7; }
   .modal .mch .x { cursor:pointer; color:#98a2b3; }
   .modal .mch .x:hover { color:#ef4444; }
-  .modal .mcb { padding:14px 18px; overflow-y:auto; }
+  .modal .mcb { padding:14px 18px; overflow-y:auto; min-height:0; flex:1 1 auto; }
   .modal .mcb p { font-size:12px; color:#5a6577; margin-bottom:10px; }
   .fld { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
   .fld label { font-size:12px; color:#5a6577; font-weight:600; }
@@ -249,7 +249,7 @@
           </div>
         </div>
         <div class="bon">
-          <button onclick="simpanBon()" id="btnSimpanBon" title="Gantung transaksi (butuh member)"><i class="bi bi-bookmark-plus"></i> Gantung</button>
+          <button onclick="simpanBon()" id="btnSimpanBon" title="Gantung transaksi"><i class="bi bi-bookmark-plus"></i> Gantung</button>
           <button onclick="bukaBon()" title="Daftar bon gantung"><i class="bi bi-list-ul"></i><span id="bonBadge"></span></button>
         </div>
       </div>
@@ -280,7 +280,7 @@
         <button id="mQris"><i class="bi bi-qr-code"></i> QRIS</button>
         <button id="mTrf"><i class="bi bi-bank"></i> Transfer</button>
       </div>
-      <button class="payhang" id="payHang" onclick="simpanBon()" disabled title="Gantung transaksi (butuh member)"><i class="bi bi-bookmark-plus"></i> Gantung Bon</button>
+      <button class="payhang" id="payHang" onclick="simpanBon()" disabled title="Gantung transaksi"><i class="bi bi-bookmark-plus"></i> Gantung Bon</button>
       <button class="pay" onclick="bayar()">BAYAR</button>
       <div class="offq" id="offq"><span class="n" id="offqN">0</span><span id="offqTxt">transaksi offline belum tersinkron</span>
         <button type="button" id="simOnline" class="simBtn"><i class="bi bi-arrow-repeat"></i> Sinkronkan</button></div>
@@ -833,8 +833,8 @@
     document.getElementById('cnt').textContent=cart.length?'('+cart.reduce((s,c)=>s+c.q,0)+')':'';
     document.getElementById('sub').textContent=fmt(sub);
     document.getElementById('total').textContent=fmt(sub-disc);
-    document.getElementById('btnSimpanBon').disabled = !cart.length || !member;
-    const ph=document.getElementById('payHang'); if(ph) ph.disabled = !cart.length || !member;
+    document.getElementById('btnSimpanBon').disabled = !cart.length;
+    const ph=document.getElementById('payHang'); if(ph) ph.disabled = !cart.length;
     const aktif=bon.length;
     document.getElementById('bonBadge').innerHTML = aktif?`<span class="badge">${aktif}</span>`:'';
   }
@@ -954,7 +954,7 @@
   function toggleMember(){ document.getElementById('mwin').classList.toggle('show'); }
   function renderMemberList(){
     const kw=_cM.trim();
-    const list=kw?MEMBERS.filter(m=>(m.nama||'').toLowerCase().includes(kw)):MEMBERS;
+    const list=(kw?MEMBERS.filter(m=>(m.nama||'').toLowerCase().includes(kw)):MEMBERS.slice()).sort((a,b)=>(a.nama||'').localeCompare(b.nama||'','id'));
     document.getElementById('mList').innerHTML = list.map(m=>{
       const d=(m.d||0);
       // Chip tampil nama kategori member (server-authoritative), bukan label
@@ -1061,7 +1061,7 @@
   /* ===== Bon gantung ===== */
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
-    if(!member){ toast('Pilih member dulu sebelum menggantung'); return; }
+    const pn = member?.nama || null; // nama pelanggan utk bon (opsional — boleh kosong tanpa member)
     // Hitung total dari angka cart (bukan parse textContent) — konsisten dgn
     // renderCart: sub = Σ harga memakai harga member, disc 0 (total = subtotal).
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
@@ -1070,7 +1070,7 @@
     cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
     const base = localStorage.getItem('zpos_base') || '';
     const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const save = (idx)=>{ const b=bon[idx]; b.nama=member.nama; b.items=cart.map(c=>({id:c.id,q:c.q}));
+    const save = (idx)=>{ const b=bon[idx]; b.nama=pn; b.items=cart.map(c=>({id:c.id,q:c.q}));
       b.subtotal=sub; b.diskon=disc; b.total=sub-disc; simpanBonStorage(); };
 
     // --- SIMPAN ULANG bon yang sedang ditarik (tarik → tambah item → simpan lagi) ---
@@ -1092,7 +1092,7 @@
               .then(()=>{})
               .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','edit_bon gagal bonId='+b.bonId+' | '+String(m)); });
           } else {
-            tinv('kirim_bon',{ baseUrl:base, nama: member.nama, produk: JSON.stringify(webProduk), total: sub-disc })
+            tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc })
               .then(serverId=>{ b.bonId=serverId; simpanBonStorage(); })
               .catch(()=>{});
           }
@@ -1102,7 +1102,7 @@
         notaTerakhir = buildNotaBon(idx);
         toast('Bon diperbarui: total '+bon[idx].total.toLocaleString('id-ID'));
         document.getElementById('bonCetakTxt').innerHTML =
-          'Bon <b>'+bon[idx].total.toLocaleString('id-ID')+'</b> diperbarui (tambah item) utk <b>'+escH(member.nama)+'</b>.<br>Tampilkan / cetak nota bon?';
+          'Bon <b>'+bon[idx].total.toLocaleString('id-ID')+'</b> diperbarui (tambah item) utk <b>'+escH(pn||'Umum')+'</b>.<br>Tampilkan / cetak nota bon?';
         document.getElementById('bonCetakModal').classList.add('show');
         clearCart();
         return;
@@ -1110,7 +1110,7 @@
     }
 
     _bonId = 0; // mulai sesi bon baru
-    bon.push({ nama: member.nama, items: cart.map(c=>({id:c.id,q:c.q})), subtotal: sub, diskon: disc, total: sub-disc,
+    bon.push({ nama: pn, items: cart.map(c=>({id:c.id,q:c.q})), subtotal: sub, diskon: disc, total: sub-disc,
                no: ++_bonSeq,
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonSeq();
@@ -1122,16 +1122,16 @@
       // WAJIB kirim baseUrl: Rust fn kirim_bon butuh arg base_url; kalau nggak,
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
-      tinv('kirim_bon',{ baseUrl:base, nama: member.nama, produk: JSON.stringify(webProduk), total: sub-disc })
+      tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc })
         .then(serverId=>{ bon[idx].bonId=serverId; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
         .catch(()=>{}); // offline → tetap lokal, tak masuk web
     }
-    toast('Bon digantung atas nama '+member.nama);
+    toast('Bon digantung atas nama '+(pn||'Umum'));
     // Siapkan nota bon utk opsi cetak (header BON, belum lunas). Set notaTerakhir
     // supaya tombol Cetak Nota (spooler/HTML) reuse alur yg sama dgn nota biasa.
     notaTerakhir = buildNotaBon(bon.length-1);
     document.getElementById('bonCetakTxt').innerHTML =
-      'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(member.nama)+'</b> digantung.<br>Tampilkan / cetak nota bon?';
+      'Bon <b>'+bon[bon.length-1].total.toLocaleString('id-ID')+'</b> utk <b>'+escH(pn||'Umum')+'</b> digantung.<br>Tampilkan / cetak nota bon?';
     document.getElementById('bonCetakModal').classList.add('show');
     clearCart();
   }
@@ -1175,11 +1175,11 @@
         })
       : bon;
     el.innerHTML = list.length===0
-      ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">${bon.length===0?'Belum ada bon gantung.<br>Isi keranjang + pilih member, lalu klik <b>Gantung</b>.':'Tidak ada bon cocok dgn pencarian.'}</p>`
+      ? `<p style="text-align:center;color:#98a2b3;padding:20px 0">${bon.length===0?'Belum ada bon gantung.<br>Isi keranjang, klik <b>Gantung</b>.':'Tidak ada bon cocok dgn pencarian.'}</p>`
       : list.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="info"><div class="nm"><b style="color:#ffb347">#${b.bonId||('L'+(b.no||x+1))}</b> · ${b.nama}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div><div class="sub">${b.items.reduce((s,it)=>s+it.q,0)} item · ${fmt(b.total)}</div></div>
+          <div class="nm"><b style="color:#ffb347">#${b.bonId||('L'+(b.no||x+1))}</b> · ${b.nama||'Umum'}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div>
           <button onclick="tarikBon(${bon.indexOf(b)})">Tarik</button>
           <span class="del" onclick="hapusBon(${bon.indexOf(b)})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
