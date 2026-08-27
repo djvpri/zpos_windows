@@ -1142,7 +1142,7 @@
     const itemsFix=b.items.map(it=>{
       const src = (it.id<0 && b.vmap && b.vmap[it.id]) ? {n:b.vmap[it.id].nama, p:b.vmap[it.id].harga} : pCart(it.id);
       const h=src ? (hargaMember(it.id)||src.p) : 0;
-      return { nama_produk:src?src.n:'', qty:it.q, subtotal:h*it.q };
+      return { nama_produk:src?src.n:'', harga:h, qty:it.q, subtotal:h*it.q };
     });
     return { items:itemsFix, subtotal: b.subtotal!=null?b.subtotal:b.total, diskon: b.diskon||0, total:b.total,
              bayar:0, kembali:0, noTransaksi:'BON', metode:'BON (digantung)',
@@ -1430,8 +1430,9 @@
   // print (mis. tauri-plugin-printer / esc-pos serial) — TODO saat printer termal dipakai.
   function desainKasir(){
     const id=TOKO_INFO.desain_nota||'klasik';
-    if(id==='modern') return { footerPowered:true, infoSebelumItems:false, totalPertama:true, dividerSolid:true, showKsr:false };
-    return { footerPowered:false, infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true }; // klasik
+    if(id==='modern') return { footerPowered:true, infoSebelumItems:false, totalPertama:true, dividerSolid:true, showKsr:false, showHargaSatuan:false };
+    if(id==='klasik2') return { footerPowered:false, infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:true };
+    return { footerPowered:false, infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:false }; // klasik
   }
   function notaHtml(){
     const n=notaTerakhir; if(!n) return '';
@@ -1441,7 +1442,10 @@
     const div = d.dividerSolid ? 'border-top:1px solid #000' : 'border-top:1px dashed #000';
     const rows=n.items.map(i=>{
       const nm=esc(i.nama_produk)+(i.qty>1?` <span style="color:#777">x${i.qty}</span>`:'');
-      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span><span style="flex-shrink:0">${toId(i.subtotal)}</span></div>`;
+      const row=`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span><span style="flex-shrink:0">${toId(i.subtotal)}</span></div>`;
+      // Klasik 2: tampilkan harga satuan (@Rp) di bawah nama barang
+      if(d.showHargaSatuan) return row+`<div style="font-size:10px;color:#555">@${toId(i.harga)}</div>`;
+      return row;
     }).join('');
     const blokInfo = [n.noTransaksi, n.waktu];
     if(d.showKsr) blokInfo.push(n.kasir);
@@ -1516,6 +1520,8 @@
       const maxN=Math.max(0, 32-(qtyS.length+harga.length+1));
       const show=nm.length>maxN ? nm.slice(0,Math.max(0,maxN-2))+'..' : nm;
       B.push('\x1ba\x00'+show+qtyS+(' '.repeat(Math.max(1,32-(show.length+qtyS.length)-harga.length)))+harga+'\n');
+      // Klasik 2: harga satuan (@Rp) di baris bawah item.
+      if(d.showHargaSatuan) B.push('\x1ba\x00@'+rp(i.harga)+'\n');
     });
     line(divider);
     if(d.totalPertama){ B.push('\x1bE\x01\x1ba\x00'+'TOTAL'+' '.repeat(Math.max(1,32-5-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00'); }
