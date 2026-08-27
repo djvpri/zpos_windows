@@ -1524,10 +1524,10 @@
       if(d.showHargaSatuan) B.push('\x1ba\x00@'+rp(i.harga)+'\n');
     });
     line(divider);
-    if(d.totalPertama){ B.push('\x1bE\x01\x1ba\x00'+'TOTAL'+' '.repeat(Math.max(1,32-5-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00'); }
+    if(d.totalPertama){ B.push('\x1bE\x01\x1ba\x00'+'TOTAL'+' '.repeat(Math.max(1,32-5-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00\n'); }
     totalLine('Subtotal', rp(n.subtotal));
     totalLine('Diskon', '-'+rp(n.diskon));
-    if(!d.totalPertama){ const totLine='TOTAL'; B.push('\x1bE\x01\x1ba\x00'+totLine+' '.repeat(Math.max(1,32-totLine.length-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00'); }
+    if(!d.totalPertama){ const totLine='TOTAL'; B.push('\x1bE\x01\x1ba\x00'+totLine+' '.repeat(Math.max(1,32-totLine.length-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00\n'); }
     if(!d.infoSebelumItems){ line(divider); infoLeft(); }
     totalLine('Bayar', rp(n.bayar));
     totalLine('Kembalian', rp(n.kembali));
