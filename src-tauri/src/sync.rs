@@ -14,6 +14,8 @@ pub struct RemoteProduk {
     #[serde(default)]
     pub barcode: Option<String>,
     #[serde(default)]
+    pub barcode_internal: Option<String>,
+    #[serde(default)]
     pub foto_url: Option<String>,
 }
 
@@ -229,16 +231,17 @@ impl SyncClient {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
             let mut st = tx.prepare_cached(
-                "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,foto_url,updated_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7, datetime('now'))
+                "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,barcode_internal,foto_url,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8, datetime('now'))
                  ON CONFLICT(id) DO UPDATE SET
                    nama=excluded.nama, harga=excluded.harga, stok=excluded.stok,
                    kategori_id=excluded.kategori_id, barcode=excluded.barcode,
+                   barcode_internal=excluded.barcode_internal,
                    foto_url=excluded.foto_url, updated_at=datetime('now')",
             ).map_err(|e| e.to_string())?;
             for p in &list {
                 st.execute((
-                    p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.foto_url,
+                    p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.barcode_internal, &p.foto_url,
                 )).map_err(|e| e.to_string())?;
             }
         }

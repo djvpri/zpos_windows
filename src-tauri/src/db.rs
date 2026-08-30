@@ -18,6 +18,7 @@ pub fn init(conn: &Connection) -> Result<()> {
             stok        INTEGER NOT NULL DEFAULT 0,
             kategori_id INTEGER,
             barcode     TEXT,
+            barcode_internal TEXT,
             foto_url    TEXT,
             updated_at  TEXT
         );
@@ -91,6 +92,16 @@ pub fn init(conn: &Connection) -> Result<()> {
             "ALTER TABLE antrian ADD COLUMN user_id INTEGER;
              ALTER TABLE antrian ADD COLUMN user_nama TEXT;",
         )?;
+    }
+
+    // Migration produk: DB lama tanpa `barcode_internal` (a.k.a kolom baru utk
+    // barcode pendek label 25mm) → tambah via ALTER supaya sync isi kolomnya.
+    let pcols: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('produk')")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<Vec<_>>>()?;
+    if !pcols.iter().any(|c| c == "barcode_internal") {
+        conn.execute("ALTER TABLE produk ADD COLUMN barcode_internal TEXT", [])?;
     }
 
     Ok(())

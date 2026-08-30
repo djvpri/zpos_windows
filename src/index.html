@@ -784,9 +784,11 @@
         // SEBAGAI SUBSTRING buffer — pilih yg terpanjang sbg match paling tegas.
         let best=null;
         for(const x of PRODUK){
-          if(x.b && x.b.length>=6 && raw.includes(x.b)){
-            if(!best || x.b.length>best.b.length) best=x;
-          }
+          // match BUKAN cuma barcode asli (x.b), tapi juga barcode_internal pendek
+          // (x.bi, label 25mm) — keduanya valid utk produk yg sama.
+          const codes=[x.b,x.bi].filter(Boolean);
+          const hit=codes.find(c=>c.length>=6 && raw.includes(c));
+          if(hit && (!best || hit.length>best.hit.length)) best={id:x.id, hit};
         }
         if(best){ add(best.id); }
         else { toast('Barcode tidak dikenal: '+raw); logErr('SCN', 'scan TAK dikenal raw=['+raw+'] len='+raw.length+' — QR/barcode tak match produk (kemungkinan QR kecil tak terbaca penuh / format beda)'); }
@@ -1686,7 +1688,7 @@
     try{
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
-      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null}));
+      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null, bi:x.barcode_internal||null}));
       MEMBERS = m.map(x=>({id:x.id, nama:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');

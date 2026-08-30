@@ -20,17 +20,17 @@ pub struct AppState {
 
 // ---------- tipe response utk frontend ----------
 #[derive(Serialize)]
-struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, foto_url: Option<String>, k: Option<String> }
+struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, barcode_internal: Option<String>, foto_url: Option<String>, k: Option<String> }
 
 // ---------- commands ----------
 #[tauri::command]
 fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id ORDER BY p.nama")
+    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id ORDER BY p.nama")
         .map_err(|e| e.to_string())?;
     let rows = st.query_map([], |r| Ok(ProdukRow{
         id: r.get(0)?, nama: r.get(1)?, harga: r.get(2)?, stok: r.get(3)?,
-        kategori_id: r.get(4)?, barcode: r.get(5)?, foto_url: r.get(6)?, k: r.get(7)?,
+        kategori_id: r.get(4)?, barcode: r.get(5)?, barcode_internal: r.get(6)?, foto_url: r.get(7)?, k: r.get(8)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
@@ -39,11 +39,11 @@ fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
 fn cari_produk(state: State<AppState>, q: String) -> Result<Vec<ProdukRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let like = format!("%{}%", q);
-    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id WHERE p.nama LIKE ?1 OR p.barcode LIKE ?1 ORDER BY p.nama")
+    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id WHERE p.nama LIKE ?1 OR p.barcode LIKE ?1 OR p.barcode_internal LIKE ?1 ORDER BY p.nama")
         .map_err(|e| e.to_string())?;
     let rows = st.query_map([&like], |r| Ok(ProdukRow{
         id: r.get(0)?, nama: r.get(1)?, harga: r.get(2)?, stok: r.get(3)?,
-        kategori_id: r.get(4)?, barcode: r.get(5)?, foto_url: r.get(6)?, k: r.get(7)?,
+        kategori_id: r.get(4)?, barcode: r.get(5)?, barcode_internal: r.get(6)?, foto_url: r.get(7)?, k: r.get(8)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
