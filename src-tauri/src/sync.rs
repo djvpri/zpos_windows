@@ -17,7 +17,18 @@ pub struct RemoteProduk {
     pub barcode_internal: Option<String>,
     #[serde(default)]
     pub foto_url: Option<String>,
+    // Produk digital (jual via Digiflazz). Server web sertakan via `SELECT p.*`.
+    // Produk lama tanpa kolom ini default 'fisik'/'prabayar' → perilaku terjaga.
+    #[serde(default = "default_jenis")]
+    pub jenis: String,
+    #[serde(default)]
+    pub buyer_sku_code: Option<String>,
+    #[serde(default = "default_brand")]
+    pub digital_brand: String,
 }
+
+fn default_jenis() -> String { "fisik".into() }
+fn default_brand() -> String { "prabayar".into() }
 
 #[derive(Debug, Deserialize)]
 pub struct RemoteKategori {
@@ -231,17 +242,20 @@ impl SyncClient {
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
             let mut st = tx.prepare_cached(
-                "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,barcode_internal,foto_url,updated_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8, datetime('now'))
+                "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,barcode_internal,foto_url,jenis,buyer_sku_code,digital_brand,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11, datetime('now'))
                  ON CONFLICT(id) DO UPDATE SET
-                   nama=excluded.nama, harga=excluded.harga, stok=excluded.stok,
-                   kategori_id=excluded.kategori_id, barcode=excluded.barcode,
-                   barcode_internal=excluded.barcode_internal,
-                   foto_url=excluded.foto_url, updated_at=datetime('now')",
+                  nama=excluded.nama, harga=excluded.harga, stok=excluded.stok,
+                  kategori_id=excluded.kategori_id, barcode=excluded.barcode,
+                  barcode_internal=excluded.barcode_internal,
+                  foto_url=excluded.foto_url,
+                  jenis=excluded.jenis, buyer_sku_code=excluded.buyer_sku_code,
+                  digital_brand=excluded.digital_brand, updated_at=datetime('now')",
             ).map_err(|e| e.to_string())?;
             for p in &list {
                 st.execute((
                     p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.barcode_internal, &p.foto_url,
+                    &p.jenis, &p.buyer_sku_code, &p.digital_brand,
                 )).map_err(|e| e.to_string())?;
             }
         }
@@ -858,6 +872,24 @@ impl SyncClient {
             }
         }
         Ok(pushed)
+    }
+
+    // Transaksi produk DIGITAL (jual pulsa/tagihan via Digiflazz). Berbeda dgn
+    // push_antrian: (1) HARUS online (server eksekusi topup seketika), (2) TIDAK
+    // disimpan ke antrian offline (supaya tak pernah "pending tak tahu nasib"
+    // saat app tutup), (3) baca response utk SN/status. Server catat penuh
+    // (`transaksi_digital`) — desktop tak duplikat riwayat; laporan di web.
+    pub fn jual_digital(&self, body: &Value) -> Result<Value, String> {
+        let resp = self.http.post(self.endpoint("/api/transaksi"))
+            .header("Cookie", self.auth_cookie())
+            .json(body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() {
+            // 409 = sudah pernah masuk (retry) — anggap berhasil, body lama utk SN.
+            if resp.status().as_u16() == 409 { return Ok(serde_json::json!({"digital": []})); }
+            return Err(self.err_detail(resp));
+        }
+        resp.json::<Value>().map_err(|e| format!("json: {e}"))
     }
 
     // Fase 2 — replay shift OFFLINE yg sudah ditutup ke server saat online:

@@ -20,6 +20,9 @@ pub fn init(conn: &Connection) -> Result<()> {
             barcode     TEXT,
             barcode_internal TEXT,
             foto_url    TEXT,
+            jenis       TEXT NOT NULL DEFAULT 'fisik',    -- 'fisik' | 'digital'
+            buyer_sku_code TEXT,                -- kode Digiflazz (xld10, pln, ...)
+            digital_brand TEXT NOT NULL DEFAULT 'prabayar', -- 'prabayar' | 'pasca'
             updated_at  TEXT
         );
 
@@ -102,6 +105,17 @@ pub fn init(conn: &Connection) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     if !pcols.iter().any(|c| c == "barcode_internal") {
         conn.execute("ALTER TABLE produk ADD COLUMN barcode_internal TEXT", [])?;
+    }
+    // Migration produk DIGITAL: DB lama tanpa kolom jenis/buyer_sku_code/digital_brand
+    // → tambah via ALTER. Produk lama default 'fisik' (perilaku lama terjaga).
+    if !pcols.iter().any(|c| c == "jenis") {
+        conn.execute("ALTER TABLE produk ADD COLUMN jenis TEXT NOT NULL DEFAULT 'fisik'", [])?;
+    }
+    if !pcols.iter().any(|c| c == "buyer_sku_code") {
+        conn.execute("ALTER TABLE produk ADD COLUMN buyer_sku_code TEXT", [])?;
+    }
+    if !pcols.iter().any(|c| c == "digital_brand") {
+        conn.execute("ALTER TABLE produk ADD COLUMN digital_brand TEXT NOT NULL DEFAULT 'prabayar'", [])?;
     }
 
     Ok(())
