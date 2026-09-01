@@ -139,6 +139,10 @@
   /* harga asli coret */
   .item .p .gores { text-decoration:line-through; color:#c3c9d6; margin-right:6px; font-size:10px; }
   .item .p .member-tag { display:inline-block; margin-left:5px; font-size:9px; font-weight:700; color:#1e7d33; background:#e7f6ec; padding:1px 6px; border-radius:999px; }
+  .item .digrow { flex-basis:100%; max-width:100%; margin:2px 0 0; display:flex; flex-direction:column; gap:4px; }
+  .item .digrow-lbl { font-size:10px; color:#7a8699; font-weight:600; }
+  .item .digno { width:100%; box-sizing:border-box; padding:6px 9px; border:1px solid #dde3ee; border-radius:7px; font-size:13px; }
+  .item .digware { font-size:10px; color:#b7791f; }
   /* modal bon */
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:60; }
   .modal.show { display:flex; }
@@ -741,20 +745,25 @@
     const q=document.getElementById('q').value.toLowerCase();
     const g=document.getElementById('grid');
     const list=PRODUK.filter(p=>(curCat==='Semua' || p.k===curCat) && p.n.toLowerCase().includes(q));
-    g.innerHTML=list.slice(0,visN).map(p=>
-      `<div class="card ${p.s<=0?'empty':(p.s<5?'low':'')}" onclick="${p.s>0?`add(${p.id})`:'void(0)'}">
-        <div class="ph"><i class="bi ${p.e||'bi-box'}"></i></div><div class="nm">${p.n}</div>
-        <div class="pr">${p.s>0?fmt(p.p):'<span style=\"color:#c3c9d6\">Stok habis</span>'}</div><div class="stk">${p.s>0?`stok ${p.s}`:''}</div>
-      </div>`).join('');
+    g.innerHTML=list.slice(0,visN).map(p=>{
+      // Produk DIGITAL (jual pulsa/tagihan via Digiflazz): selalu bisa diklik
+      // walau stok 0 (produk virtual — server force stok 0), ditandai badge.
+      const dig = p.jenis==='digital';
+      return `<div class="card ${!dig&&p.s<=0?'empty':(!dig&&p.s<5?'low':'')}" onclick="${(!dig&&p.s<=0)?'void(0)':`add(${p.id})`}">
+        <div class="ph"><i class="bi ${p.e||(dig?'bi-phone':'bi-box')}"></i></div><div class="nm">${p.n}${dig?' <span style="color:#22c55e;font-size:10px;padding:1px 6px;border:1px solid #22c55e;border-radius:9px">DIGITAL</span>':''}</div>
+        <div class="pr">${fmt(p.p)}</div><div class="stk">${dig?'':'stok '+p.s}</div>
+      </div>`;
+    }).join('');
     const lm=document.getElementById('loadMoreWrap');
     if(list.length>visN){ lm.classList.remove('hidden'); } else { lm.classList.add('hidden'); }
   }
   function add(id){
     const p=PRODUK.find(p=>p.id===id); if(!p) return;
-    if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+    const dig = p.jenis==='digital';
+    if(!dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
     const f=cart.find(c=>c.id===id);
     const q=(f?f.q:0)+1;
-    if(q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    if(!dig && q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     if(f) f.q++; else cart.push({id,q:1});
     renderCart();
   }
@@ -818,9 +827,20 @@
       const hm=hargaMember(c.id);
       const pakai = hm!=null && hm!==p.p;
       const tampi = pakai ? hm : p.p;
+      const dig = p.jenis==='digital';
+      const digInput = dig ? (p.digital_brand==='pasca' ? `
+        <div class="digrow"><div class="digrow-lbl">No. tujuan (ID pelanggan)</div>
+          <input class="digno" placeholder="cth. 320000123456" value="${c.no??''}" oninput="setDigNo(${x},this.value)" ${offline?'disabled style="opacity:.5"':''}>
+          <div class="digware">Pasca (2-step tagihan) belum didukung kasir — jual via halaman web.</div>
+        </div>` : `
+        <div class="digrow"><div class="digrow-lbl">No. tujuan (nomor pelanggan)</div>
+          <input class="digno" placeholder="cth. 0857xxxxxxx" value="${c.no??''}" oninput="setDigNo(${x},this.value)" ${offline?'disabled style="opacity:.5"':''}>
+        </div>`)
+      : '';
       return `<div class="item">
         <div class="meta"><div class="n">${p.n}</div><div class="p">${pakai?`<span class="gores">${fmt(p.p)}</span>`:''}${fmt(tampi)}${pakai?'<span class="member-tag">MEMBER</span>':''}</div></div>
-        <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)" ${c.q>=p.s?'disabled style="opacity:.35;cursor:not-allowed"':''}>+</button></div>
+        ${digInput}
+        <div class="qty"><button onclick="chg(${x},-1)">−</button><span>${c.q}</span><button onclick="chg(${x},1)">+</button></div>
         <div class="line">${fmt(tampi*c.q)}</div></div>`;
     }).join('');
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
@@ -843,8 +863,14 @@
   function chg(x,d){
     const c=cart[x];
     const p=pCart(c.id);
-    if(d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    const dig = p && p.jenis==='digital';
+    if(!dig && d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
+  }
+  // Simpan nomor tujuan utk item digital di keranjang (customer_no per item).
+  function setDigNo(x,v){
+    const c=cart[x]; if(!c) return;
+    c.no=String(v||'').trim();
   }
   function clearCart(){ cart=[]; _tarikBon=null; _bonId=0; diskonCart=0; renderCart(); }
 
@@ -1278,13 +1304,17 @@
   function bayar(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     if(!kasirAktif){ bukaLogin(); toast('Masuk dulu pilih kasir & PIN'); return; }
+    // Produk digital → jalur khusus: wajib online, eksekusi Digiflazz seketika.
+    // Tunai tetap lewat modal (intip kembalian) lalu konfirmTunai → prosesBayarDigital.
+    const adaDigital = cart.some(c=>{ const p=pCart(c.id); return p && p.jenis==='digital'; });
     // Cegah jual barang stok 0 / melebihi stok (duplicate guard dari add/chg —
     // di sini jaga bila stok berubah via auto-sync setelah barang masuk keranjang).
     for(const c of cart){
       const p=pCart(c.id);
       if(!p) continue;
-      if(p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
-      if(c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+      const dig = p.jenis==='digital';
+      if(!dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+      if(!dig && c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
     const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaMember(c.id)||p.p; return s+h*c.q; },0);
     const diskon=diskonCart; // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
@@ -1301,6 +1331,7 @@
       setTimeout(()=>document.getElementById('tpUang').focus(),60);
       return;
     }
+    if(adaDigital){ prosesBayarDigital(total, total, 0); return; }
     prosesBayar(total, total, 0);
   }
   function hitungKemb(){
@@ -1324,6 +1355,8 @@
     const uang=parseInt(document.getElementById('tpUang').value,10)||0;
     if(uang < _tpTotal){ document.getElementById('tpMsg').textContent='Uang diterima kurang dari total.'; return; }
     tutupTunai();
+    const adaDigital = cart.some(c=>{ const p=pCart(c.id); return p && p.jenis==='digital'; });
+    if(adaDigital){ prosesBayarDigital(_tpTotal, uang, uang-_tpTotal); return; }
     prosesBayar(_tpTotal, uang, uang-_tpTotal);
   }
   function prosesBayar(total, bayar, kembali){
@@ -1425,6 +1458,77 @@
     document.getElementById('printBtn').classList.remove('hidden');
     clearCart();
   }
+  // ===== Bayar produk DIGITAL (jual pulsa/tagihan via Digiflazz) =====
+  // Jalur khusus: wajib online (server eksekusi topup seketika), nomor tujuan
+  // wajib terisi, pasca (2-step tagihan) belum didukung kasir → jual via web.
+  // TIDAK masuk antrian offline (jual_digital tak simpan lokal). Server catat
+  // transaksi_digital penuh; desktop cuma baca SN utk struk.
+  async function prosesBayarDigital(total, bayar, kembali){
+    if(offline){ toast('Produk digital butuh koneksi internet. Nyala online lalu coba lagi.'); return; }
+    const base=localStorage.getItem('zpos_base');
+    if(!base){ toast('Belum di-setup. Isi Base URL dulu (Pengaturan).'); return; }
+    // Item digital pasca tak didukung kasir — blokir transaksi jika ada.
+    for(const c of cart){
+      const p=pCart(c.id); if(!p) continue;
+      if(p.jenis==='digital' && p.digital_brand==='pasca'){
+        toast('Tagihan (pasca) belum didukung kasir. Jual via halaman web.'); return;
+      }
+    }
+    // Nomor tujuan wajib utk semua item digital.
+    for(const c of cart){
+      const p=pCart(c.id); if(!p) continue;
+      if(p.jenis==='digital' && !(c.no||'').trim()){
+        toast('Isi nomor tujuan utk : '+p.n); return;
+      }
+    }
+    // Bangun payload penuh (sama format prosesBayar) + `_digital` per item.
+    const items = cart.map(c=>{
+      const p=pCart(c.id); if(!p) return null;
+      const h=hargaMember(c.id)||p.p;
+      const it={ produk_id: c.id>0?c.id:null, nama_produk:p.n, harga:h, qty:c.q, subtotal:h*c.q };
+      if(p.jenis==='digital'){
+        it._digital={ buyer_sku_code:p.buyer_sku_code, customer_no:(c.no||'').trim(), brand:p.digital_brand||'prabayar' };
+      }
+      return it;
+    }).filter(Boolean);
+    const subtotal=items.reduce((s,i)=>s+i.subtotal,0);
+    const diskon=diskonCart;
+    const noTransaksi='TRX-'+Date.now().toString().slice(-8);
+    const payload={
+      trx:{ no_transaksi:noTransaksi, subtotal, diskon, pajak:0, total,
+            bayar, kembali, metode_bayar:metode, kasir:kasirAktif.nama,
+            member_nama: member?.nama || null,
+            shift_id: SHIFT?SHIFT.id:null,
+            sumber: zposIsTauri()?'kasir':'web',
+            created_at:new Date().toISOString() },
+      items,
+    };
+    toast('Proses produk digital…');
+    try{
+      const res=await tinv('jual_digital',{baseUrl:base, payload});
+      const digital=res&&res.digital?res.digital:[];
+      // Simpan utk cetak nota (SN/status per item digital).
+      notaTerakhir={ items, subtotal, diskon, total, bayar, kembali,
+                    noTransaksi, metode, kasir:kasirAktif.nama,
+                    member: member?.nama || null,
+                    digital,
+                    waktu:new Date().toLocaleString('id-ID') };
+      // Status ringkas utk overlay.
+      const oke=digital.filter(d=>d.status==='Sukses').length;
+      const gagal=digital.length-oke;
+      let teks=`Rp<b>${total}</b> tercatat di server.`;
+      if(digital.length) teks+=`<br>${oke} sukses${gagal?`, ${gagal} perlu ditindaklanjuti (lihat nota)`:''}.`;
+      if(metode==='Tunai' && SHIFT && SHIFT.id) refKas();
+      document.getElementById('ovTxt').innerHTML=teks;
+      document.getElementById('ov').classList.add('show');
+      document.getElementById('printBtn').classList.remove('hidden');
+      clearCart();
+    }catch(e){
+      const m=e&&e.message?e.message:e;
+      toast('Gagal jual produk digital: '+m);
+      logErr('DIG', 'jual_digital '+noTransaksi+' | '+String(m));
+    }
+  }
   // ===== Cetak nota (struk) =====
   // Buka window/kiri berisi HTML nota → print() → dialog printer Windows (WebView2).
   // Data dari `notaTerakhir` (disimpan di prosesBayar sebelum keranjang dikosongkan).
@@ -1449,6 +1553,17 @@
       if(d.showHargaSatuan) return row+`<div style="font-size:10px;color:#555">@${toId(i.harga)}</div>`;
       return row;
     }).join('');
+    // Status/SN produk DIGITAL (pulsa/tagihan) utk struk — tampil per item.
+    const digitalHtml = (Array.isArray(n.digital)&&n.digital.length) ? '<div style="'+div+';margin:4px 0"></div>'
+      +n.digital.map(d=>{
+        const status = d.status==='Sukses' ? 'OK' : d.status==='Pending' ? 'PENDING' : 'GAGAL';
+        const warna = d.status==='Sukses' ? '#0a7d33' : d.status==='Pending' ? '#b7791f' : '#b00000';
+        return `<div style="font-size:10px;color:#333">
+          <div>${esc(d.customer_no||'')} — <b style="color:${warna}">${status}</b></div>
+          ${d.sn?`<div>SN: ${esc(d.sn)}</div>`:''}
+          ${(d.message&&d.status!=='Sukses')?`<div style="color:#b00000">${esc(d.message)}</div>`:''}
+        </div>`;
+      }).join('') : '';
     const blokInfo = [n.noTransaksi, n.waktu];
     if(d.showKsr) blokInfo.push(n.kasir);
     const infoHtml = '<div>No : '+esc(blokInfo[0])+'</div>'
@@ -1467,6 +1582,7 @@
       ${d.infoSebelumItems? infoHtml : ''}
       ${d.infoSebelumItems? `<div style="${div};margin:4px 0"></div>` : ''}
       ${rows}
+      ${digitalHtml}
       <div style="${div};margin:4px 0"></div>
       ${d.totalPertama? totalLine : ''}
       ${ringkas}
@@ -1688,7 +1804,7 @@
     try{
       const [p, m] = await Promise.all([tinv('list_produk'), tinv('list_member')]);
       // normalisasi field Rust (id,nama,harga,stok) → display (n,p,s,e)
-      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null, bi:x.barcode_internal||null}));
+      PRODUK = p.map(x=>({id:x.id, n:x.nama, p:x.harga, s:x.stok, e:ikonKategori(x.k), k:x.k, kid:x.kategori_id, b:x.barcode||null, bi:x.barcode_internal||null, jenis:x.jenis||'fisik', buyer_sku_code:x.buyer_sku_code||null, digital_brand:x.digital_brand||'prabayar'}));
       MEMBERS = m.map(x=>({id:x.id, nama:x.nama, kx:x.kategori_member_id, k:x.k, d:x.d}));
       offQtn = await tinv('jumlah_antrian');
       if(PRODUK.length===0) toast('Katalog kosong — sinkronkan dulu dari server (tombol Sinkron).');

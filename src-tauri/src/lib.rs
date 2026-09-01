@@ -20,17 +20,18 @@ pub struct AppState {
 
 // ---------- tipe response utk frontend ----------
 #[derive(Serialize)]
-struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, barcode_internal: Option<String>, foto_url: Option<String>, k: Option<String> }
+struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, barcode_internal: Option<String>, foto_url: Option<String>, k: Option<String>, jenis: String, buyer_sku_code: Option<String>, digital_brand: String }
 
 // ---------- commands ----------
 #[tauri::command]
 fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id ORDER BY p.nama")
+    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama,p.jenis,p.buyer_sku_code,p.digital_brand FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id ORDER BY p.nama")
         .map_err(|e| e.to_string())?;
     let rows = st.query_map([], |r| Ok(ProdukRow{
         id: r.get(0)?, nama: r.get(1)?, harga: r.get(2)?, stok: r.get(3)?,
         kategori_id: r.get(4)?, barcode: r.get(5)?, barcode_internal: r.get(6)?, foto_url: r.get(7)?, k: r.get(8)?,
+        jenis: r.get(9)?, buyer_sku_code: r.get(10)?, digital_brand: r.get(11)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
@@ -39,11 +40,12 @@ fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
 fn cari_produk(state: State<AppState>, q: String) -> Result<Vec<ProdukRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let like = format!("%{}%", q);
-    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id WHERE p.nama LIKE ?1 OR p.barcode LIKE ?1 OR p.barcode_internal LIKE ?1 ORDER BY p.nama")
+    let mut st = conn.prepare("SELECT p.id,p.nama,p.harga,p.stok,p.kategori_id,p.barcode,p.barcode_internal,p.foto_url,k.nama,p.jenis,p.buyer_sku_code,p.digital_brand FROM produk p LEFT JOIN kategori k ON k.id=p.kategori_id WHERE p.nama LIKE ?1 OR p.barcode LIKE ?1 OR p.barcode_internal LIKE ?1 ORDER BY p.nama")
         .map_err(|e| e.to_string())?;
     let rows = st.query_map([&like], |r| Ok(ProdukRow{
         id: r.get(0)?, nama: r.get(1)?, harga: r.get(2)?, stok: r.get(3)?,
         kategori_id: r.get(4)?, barcode: r.get(5)?, barcode_internal: r.get(6)?, foto_url: r.get(7)?, k: r.get(8)?,
+        jenis: r.get(9)?, buyer_sku_code: r.get(10)?, digital_brand: r.get(11)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
 }
@@ -302,6 +304,25 @@ fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: St
     let n = c.push_antrian(conn)?;
     submit_log(&app, &format!("push_antrian_only OK push={n}"));
     Ok(n)
+}
+
+// Jual produk DIGITAL (pulsa/tagihan) SEKETIKA saat online. Server eksekusi
+// Digiflazz & catat transaksi_digital; kita baca response utk SN/status utk
+// struk. TIDAK masuk antrian offline — digital wajib online. Frontend cek
+// koneksi & isi nomor tujuan sebelum panggil.
+#[tauri::command]
+fn jual_digital(state: State<AppState>, app: tauri::AppHandle, base_url: String, payload: Value) -> Result<Value, String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let meta_tok: String = guard.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url.clone(), meta_tok);
+    let r = c.jual_digital(&payload);
+    match &r {
+        Ok(v) => submit_log(&app, &format!("jual_digital OK items={}", v.get("digital").and_then(|d| d.as_array()).map(|a| a.len()).unwrap_or(0))),
+        Err(e) => submit_log(&app, &format!("jual_digital GAGAL: {e}")),
+    }
+    r
 }
 
 // Setup pertama (owner/admin tenant): login email+password sekali → server
@@ -1132,7 +1153,7 @@ fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
-            antri_transaksi, jumlah_antrian, sync_remote, push_antrian_only, buka_devtools,
+            antri_transaksi, jumlah_antrian, sync_remote, push_antrian_only, jual_digital, buka_devtools,
             list_users, login_pin,
             setup_kasir, tambah_member, list_kategori_member,
             versi_app,
