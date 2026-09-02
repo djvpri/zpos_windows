@@ -2467,9 +2467,6 @@
       autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
       await replayBonServer(); // kirim bon gantung offline yang belum masuk web
-      // Auto-upload log error → server (diagnosa remote). Hanya saat log lokal
-      // bertambah & ada koneksi; kalau tak ada baris baru / offline → no-op diam.
-      try { await tinv('kirim_log_error',{baseUrl:base, token:''}); } catch(e){}
     }catch(e){
       autoFailCount++;
       if(autoRetryMs<30000) autoRetryMs=30000;
@@ -2485,7 +2482,14 @@
         autoErrShown=true; showErr('Auto-sinkron gagal: '+(e&&e.message?e.message:e));
       }
     }
-    finally{ syncing=false; }
+    finally{
+      syncing=false;
+      // Auto-upload log error → server (diagnosa remote). JALAN TERUS APA PUN
+      // hasil sync — justru saat sync GAGAL (app tampak offline) kita butuh log
+      // utk diagnosa; kirim dipisah dari sukses/gagal sync. Rust skip sendiri
+      // kalau tak ada baris baru / tak ada koneksi (token kosong) → diam.
+      try { await tinv('kirim_log_error',{baseUrl:base, token:''}); } catch(e){}
+    }
   }
 
   document.querySelectorAll('.paybtns button').forEach(b=>b.onclick=()=>{
