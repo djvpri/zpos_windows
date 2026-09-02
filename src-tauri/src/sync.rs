@@ -18,17 +18,18 @@ pub struct RemoteProduk {
     #[serde(default)]
     pub foto_url: Option<String>,
     // Produk digital (jual via Digiflazz). Server web sertakan via `SELECT p.*`.
-    // Produk lama tanpa kolom ini default 'fisik'/'prabayar' → perilaku terjaga.
-    #[serde(default = "default_jenis")]
-    pub jenis: String,
+    // Produk fisik TIDAK mengisi digital_brand → server kirim `null`. Wajib
+    // tolerir `null` (bukan cuma field-hilang): `#[serde(default)]` di tipe
+    // non-Option TIDAK menangani JSON null eksplisit → serde pecah ("invalid
+    // type: null, expected a string") → SELURUH sync produk gagal → kasir
+    // offline. Jadikan Option, fallback string saat insert SQLite lihat bawah.
+    #[serde(default)]
+    pub jenis: Option<String>,
     #[serde(default)]
     pub buyer_sku_code: Option<String>,
-    #[serde(default = "default_brand")]
-    pub digital_brand: String,
+    #[serde(default)]
+    pub digital_brand: Option<String>,
 }
-
-fn default_jenis() -> String { "fisik".into() }
-fn default_brand() -> String { "prabayar".into() }
 
 #[derive(Debug, Deserialize)]
 pub struct RemoteKategori {
@@ -271,7 +272,12 @@ impl SyncClient {
             for p in &list {
                 st.execute((
                     p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.barcode_internal, &p.foto_url,
-                    &p.jenis, &p.buyer_sku_code, &p.digital_brand,
+                    // Fallback string utk jenis/digital_brand yang None (server fisik
+                    // kirim `digital_brand:null`). Simpan non-NULL biar SELECT read
+                    // sbg String di lib.rs tidak pecah; None → 'fisik'/'prabayar'.
+                    p.jenis.as_deref().unwrap_or("fisik"),
+                    &p.buyer_sku_code,
+                    p.digital_brand.as_deref().unwrap_or("prabayar"),
                 )).map_err(|e| e.to_string())?;
             }
         }
