@@ -237,7 +237,23 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json@produk: {e}"))?;
+        // Baca body MENTAH lalu parse serde sendiri supaya kalau decode gagal
+        // kita dapat detail PERSIS (panjang body + pesan serde field/baris + head
+        // body) — reqwest `.json::<Vec<_>>()` menyembunyikan itu ("error decoding
+        // response body" generik), mustahil tahu isi yg server balas. Instrument
+        // utk diagnosa offline `json@produk`. Sukses tidak berubah perilaku.
+        let raw = resp.text().map_err(|e| format!("body: {e}"))?;
+        let list: Vec<RemoteProduk> = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                let head: String = raw.chars().take(300).collect();
+                let tail: String = raw.chars().skip(raw.chars().count().saturating_sub(120)).collect();
+                return Err(format!(
+                    "json@produk len={} serde: {e} | head[:300]={head} | tail[-120:]={tail}",
+                    raw.len()
+                ));
+            }
+        };
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
