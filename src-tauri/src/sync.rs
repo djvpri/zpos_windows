@@ -237,7 +237,7 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json: {e}"))?;
+        let list: Vec<RemoteProduk> = resp.json().map_err(|e| format!("json@produk: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -270,7 +270,7 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json: {e}"))?;
+        let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json@kategori: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -292,7 +292,7 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send().map_err(|e| format!("network: {e}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json: {e}"))?;
+        let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json@member: {e}"))?;
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -327,7 +327,7 @@ impl SyncClient {
         let list: Vec<RemoteKategoriMember> = if body.trim().is_empty() {
             Vec::new()
         } else {
-            serde_json::from_str(&body).map_err(|e| format!("json: {e}"))?
+            serde_json::from_str(&body).map_err(|e| format!("json@kmember: {e}"))?
         };
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -378,7 +378,7 @@ impl SyncClient {
             return Err(format!("HTTP {}: {}", resp.status().as_u16(),
                 resp.text().unwrap_or_default().trim()));
         }
-        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json: {e}"))?;
+        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json@users: {e}"))?;
         let n = body.users.len();
         self.store_users(conn, &body).map_err(|e| e.to_string())?;
         Ok(n)
@@ -407,7 +407,7 @@ impl SyncClient {
             #[serde(default)]
             langganan_sampai: Option<String>,
         }
-        let me: Me = resp.json().map_err(|e| format!("json: {e}"))?;
+        let me: Me = resp.json().map_err(|e| format!("json@me: {e}"))?;
         // Data header nota dr `/api/pengaturan` (admin isi di Pengaturan web):
         // alamat, telepon, catatan_struk. Rollback-friendly: kalau endpoint gagal
         // (mis role kasir tak berhak / versi lama), tetap simpan yg sudah ada.
