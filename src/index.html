@@ -2467,6 +2467,9 @@
       autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
       offline=false; status(); // sync server berhasil → ONLINE (badge hijau)
       await replayBonServer(); // kirim bon gantung offline yang belum masuk web
+      // Auto-upload log error → server (diagnosa remote). Hanya saat log lokal
+      // bertambah & ada koneksi; kalau tak ada baris baru / offline → no-op diam.
+      try { await tinv('kirim_log_error',{baseUrl:base, token:''}); } catch(e){}
     }catch(e){
       autoFailCount++;
       if(autoRetryMs<30000) autoRetryMs=30000;

@@ -886,6 +886,117 @@ fn export_log(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dst.to_string_lossy().into_owned())
 }
 
+// ---------- Auto-upload log error (diagnosa remote ke z1pos) ----------
+// Tiap device kasir: saat file zpos-errors.log BERTAMBAH sejak kirim terakhir,
+// post delta baris (info+error) ke /api/kasir/log server web z1pos. Offline →
+// gagal network: pos TIDAK diupdate, delta di-retry submit berikutnya. Server
+// web menahan retensi 12 jam. Diregister sebagai command frontend `kirim_log_error`.
+use std::hash::{Hash, Hasher};
+
+/// ID stabil per-install: hash konten app_data_dir + nama PC. Kalau belum ada
+/// di meta, hitung & simpan. Stabil lintas boot (folder appdata tak berubah),
+/// beda antar2 PC → server bisa bedain device.
+fn kasir_device_id(conn: &Connection, anchor: &str) -> String {
+    let ada: String = conn
+        .query_row("SELECT v FROM meta WHERE k='device_id'", [], |r| r.get::<_, String>(0))
+        .unwrap_or_default();
+    if !ada.is_empty() { return ada; }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    anchor.hash(&mut h);
+    let id = format!("{:016x}", h.finish());
+    let _ = conn.execute(
+        "INSERT INTO meta (k,v) VALUES ('device_id',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+        rusqlite::params![&id],
+    );
+    id
+}
+
+fn kasir_nama_pc() -> String {
+    std::env::var("COMPUTERNAME")
+        .ok().filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| "pc".into())
+}
+
+// Post delta log error ke server web z1pos. Atom:
+//   1. banding ukuran file log vs pos terakhir di DB meta (`log_up_pos`).
+//   2. bertambah → baca baris baru sejak offset lama (reset bila log di-rotate).
+//   3. kirim JSON {device_id,nama_pc,konten} ke `<base>/api/kasir/log` (cookie auth).
+//   4. sukses → update pos; gagal network → biarkan pos (retry di putaran berikutnya).
+#[tauri::command]
+fn kirim_log_error(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    base_url: String,
+    token: String,
+) -> Result<String, String> {
+    let base = base_url.trim_end_matches('/').to_string();
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+
+    let p = log_path(&app);
+    // meta token_jwt lebih valid dari argumen (fallback) — konsisten dgn sync_remote.
+    let meta_tok: String = conn
+        .query_row("SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0))
+        .unwrap_or_default();
+    let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
+    if token.trim().is_empty() {
+        return Ok("no-token".into()); // belum setup → diam
+    }
+    if !p.exists() {
+        return Ok("no-log".into()); // belum ada file error → tak ada yg dikirim
+    }
+    // posisi terakhir yg sudah terkirim
+    let pos: i64 = conn
+        .query_row("SELECT v FROM meta WHERE k='log_up_pos'", [], |r| r.get::<_, String>(0))
+        .map(|v| v.parse::<i64>().unwrap_or(0)).unwrap_or(0);
+    let meta = std::fs::metadata(&p).map_err(|e| format!("meta log: {e}"))?;
+    let cur = meta.len() as i64;
+    if cur <= pos {
+        return Ok("no-new".into()); // log tak bertambah → skip (trafik minimal)
+    }
+    // baca baris sejak pos lama; file dikecilkan (rotate) → pos>cur: reset baca awal.
+    let from: u64 = if pos > 0 && (pos as u64) < cur as u64 { pos as u64 } else { 0 };
+    let content = std::fs::read(&p).map_err(|e| format!("baca log: {e}"))?;
+    let slice = &content[from.min(content.len() as u64) as usize..];
+    let txt = String::from_utf8_lossy(slice).trim().to_string();
+    if txt.is_empty() {
+        // tak ada baris baru walau size naik (mungkin header/nl) → tandai sukses
+        let _ = conn.execute(
+            "INSERT INTO meta (k,v) VALUES ('log_up_pos',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            rusqlite::params![cur.to_string()],
+        );
+        return Ok("no-text".into());
+    }
+    let anchor = p.display().to_string();
+    let did = kasir_device_id(conn, &anchor);
+    let pc = kasir_nama_pc();
+
+    // body kirim — tak sampai 200k biar muat (server juga memotong)
+    let body_txt = if txt.len() > 200_000 { txt[..200_000].to_string() } else { txt };
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build().map_err(|e| e.to_string())?;
+    let resp = client
+        .post(format!("{}/api/kasir/log", base))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("zpos_token={}", token))
+        .json(&serde_json::json!({ "device_id": did, "nama_pc": pc, "konten": body_txt }))
+        .send();
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let _ = conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('log_up_pos',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                rusqlite::params![cur.to_string()],
+            );
+            Ok(format!("sent {} bytes", body_txt.len()))
+        }
+        Ok(r) => Ok(format!("http {}", r.status().as_u16())), // tak update pos; retry lagi
+        Err(_) => Ok("net".into()), // offline → retry nanti; pos tak naik
+    }
+}
+
 // --- Cetak nota langsung ke printer thermal via Windows Print Spooler ----------
 // Jalur Opsi A: kirim raw ESC/POS ke driver printer (RPP02N dll) tanpa buka
 // browser / dialog print tiap cetak → jauh lebih cepat. Windows-only.
@@ -1160,6 +1271,7 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, pilih_log_dir, get_log_dir, nota_temp,
+            kirim_log_error,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi, ambil_bon_sync,
             buka_shift, tutup_shift, ambil_shift,
             saldo_shift, saldo_shift_offline, kirim_kas_keluar, daftar_kas_keluar,
