@@ -245,8 +245,11 @@
         <div class="member">
           <div class="pill" id="memberPill" onclick="toggleMember()"><i class="bi bi-person-badge"></i><span id="memberPillTxt">Member</span></div>
           <div class="mwin" id="mwin">
-            <div class="mhead" style="display:flex;justify-content:space-between;align-items:center">PILIH MEMBER
-              <button onclick="bukaAddMember()" title="Daftarkan member baru" style="background:#4f7cff;color:#fff;border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer"><i class="bi bi-person-plus"></i> Baru</button>
+            <div class="mhead" style="display:flex;justify-content:space-between;align-items:center;gap:6px">PILIH MEMBER
+              <span style="display:flex;align-items:center;gap:6px">
+                <button onclick="lepasMember()" title="Lepas member aktif" style="background:#fff6e5;color:#b26a00;border:1px solid #f0dca9;border-radius:8px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer"><i class="bi bi-person-x"></i> Lepas</button>
+                <button onclick="bukaAddMember()" title="Daftarkan member baru" style="background:#4f7cff;color:#fff;border:none;border-radius:8px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer"><i class="bi bi-person-plus"></i> Baru</button>
+              </span>
             </div>
             <input id="cariMember" oninput="_cM=this.value.toLowerCase();renderMemberList()" placeholder="Cari nama member…" style="width:100%;padding:8px 10px;border:1px solid #d6dce5;border-radius:8px;margin-bottom:8px;font-size:13px;background:#f8fafc;outline:none" />
             <div id="mList"></div>
@@ -990,7 +993,7 @@
       // diskon→hijau. Member tanpa kategori → 'harga tetap'.
       const tag = `<span class="tag ${d<0?'hitam':'murah'}">${m.k||'harga tetap'}</span>`;
       return `<div class="mitem" onclick="pilihMember(${m.id})"><i class="bi bi-person-circle"></i><div class="info"><div class="nm">${m.nama}</div><div class="kat">${m.k||'Member'}</div></div>${tag}</div>`;
-    }).join('') + (list.length===0 ? `<div class="mitem" style="color:#98a2b3"><i class="bi bi-search"></i><div class="info"><div class="nm">Tidak ada member cocok</div></div></div>` : '') + `<div class="mitem" onclick="lepasMember()" style="border-top:1px solid #f0f2f7;color:#b26a00"><i class="bi bi-person-x"></i><div class="info"><div class="nm">Lepas member</div></div></div>`;
+    }).join('') + (list.length===0 ? `<div class="mitem" style="color:#98a2b3"><i class="bi bi-search"></i><div class="info"><div class="nm">Tidak ada member cocok</div></div></div>` : '');
   }
   /* ===== Tambah member (kasir daftarkan pelanggan, butuh online) ===== */
   function bukaAddMember(){
