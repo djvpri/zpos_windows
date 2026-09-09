@@ -1210,8 +1210,8 @@
     const sess = (Array.isArray(b.sess)&&b.sess.length) ? b.sess : [{all:true}];
     const grup = sess.map((g,gi)=>{
       const its = g && !g.all
-        ? g.items.map(it=>resItem(it.id, it.q)).filter(i=>i.q>0)
-        : (b.items||[]).map(it=>resItem(it.id, it.q)).filter(i=>i.q>0);
+        ? g.items.map(it=>resItem(it.id, it.q)).filter(i=>i.qty>0)
+        : (b.items||[]).map(it=>resItem(it.id, it.q)).filter(i=>i.qty>0);
       return { seq:gi+1, all: !!(g&&g.all), tsLabel: g&&!g.all ? (tglJam(g.ts)) : '', items:its,
                subtotal: its.reduce((s,i)=>s+i.subtotal,0) };
     }).filter(g=>g.items.length);
