@@ -1090,6 +1090,34 @@
   document.addEventListener('click',e=>{ if(!e.target.closest('.member')) document.getElementById('mwin').classList.remove('show'); });
 
   /* ===== Bon gantung ===== */
+  // Bon menyimpan GROUP per-kiriman (barang masuk kapan) di `bon[i].sess` =
+  // [{ ts: epoch_ms, items: [{id, q}] }] → nota bon menampilkan tiap grup
+  // plus Subtotal per grup. `bon[i].items` (flat = isi saat ini) TETAP dipakai
+  // tarik/hapus/total; invarian: Jumlah q per id pada semua sess == q items.
+  const tglJam = ms => { const d = new Date(ms); const p = n => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); };
+  // Re-alokasi qty items dari sess lama ke target `kart`. Penambahan qty/id baru
+  // dilimpahkan ke grup terdahulu dulu (urutan sub-bagian); KEKURANGAN dari kart
+  // (barang dikurangi/dihapus) dicabut dari SESSION TERAKHIR yang punya id tsb →
+  // sess tak pernah "menggelembung" melebihi isi bon & grup kosong dibuang.
+  function rebuildSess(oldSess, kart){
+    const need = {}; kart.forEach(c => need[c.id] = (need[c.id] || 0) + (c.q || 0));
+    const out = [];
+    for(const g of (oldSess || [])){
+      const its = [];
+      for(const it of (g.items || [])){
+        const rem = need[it.id];
+        if(!rem) continue;
+        const take = Math.min(it.q, rem);
+        its.push({ id: it.id, q: take });
+        need[it.id] = rem - take;
+      }
+      if(its.length) out.push({ ts: (g.ts != null) ? g.ts : Date.now(), items: its });
+    }
+    const left = Object.entries(need).filter(([,q]) => q > 0);
+    if(left.length) out.push({ ts: Date.now(), items: left.map(([id, q]) => ({ id: Number(id), q })) });
+    return out;
+  }
   function simpanBon(){
     if(!cart.length){ toast('Keranjang kosong'); return; }
     const pn = member?.nama || null; // nama pelanggan utk bon (opsional — boleh kosong tanpa member)
@@ -1113,6 +1141,7 @@
         // Item virtual (id negatif) dari cart tsb + items lama uda tergabung di cart
         // (tarikBon restore items bon ke cart). vmap pertahankan milik bon lama.
         if(webProduk) b.vmap = Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]]));
+        b.sess = rebuildSess(b.sess, cart);   // kelompok per-kiriman: barang baru dilimpahkan tsb 1 grup baru
         save(idx);
         renderBonList();
         // Web: update FULL isi bon (delta stok hold = item baru). Kalau bonId=0
@@ -1143,6 +1172,7 @@
     _bonId = 0; // mulai sesi bon baru
     bon.push({ nama: pn, items: cart.map(c=>({id:c.id,q:c.q})), subtotal: sub, diskon: disc, total: sub-disc,
                no: ++_bonSeq,
+               sess: [{ ts: Date.now(), items: cart.map(c=>({id:c.id,q:c.q})) }],
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonSeq();
     simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
@@ -1170,12 +1200,23 @@
   function buildNotaBon(idx){
     const b=bon[idx]||{items:[],total:0};
     // Item virtual (id negatif) ambil dr vmap bon; item asli dr pCart.
-    const itemsFix=b.items.map(it=>{
-      const src = (it.id<0 && b.vmap && b.vmap[it.id]) ? {n:b.vmap[it.id].nama, p:b.vmap[it.id].harga} : pCart(it.id);
-      const h=src ? (hargaMember(it.id)||src.p) : 0;
-      return { nama_produk:src?src.n:'', harga:h, qty:it.q, subtotal:h*it.q };
-    });
-    return { items:itemsFix, subtotal: b.subtotal!=null?b.subtotal:b.total, diskon: b.diskon||0, total:b.total,
+    const resItem=(id,q)=>{
+      const src = (id<0 && b.vmap && b.vmap[id]) ? {n:b.vmap[id].nama, p:b.vmap[id].harga} : pCart(id);
+      const h=src ? (hargaMember(id)||src.p) : 0;
+      return { id, nama_produk:src?src.n:'', harga:h, qty:q, subtotal:h*q };
+    };
+    // Grup per-kiriman (sess). Bon lama yang disimpan SEBELUM fitur ini tak punya
+    // sess → satu grup generik "Semua" biar nota tetap jalan (subtotal grup == total).
+    const sess = (Array.isArray(b.sess)&&b.sess.length) ? b.sess : [{all:true}];
+    const grup = sess.map((g,gi)=>{
+      const its = g && !g.all
+        ? g.items.map(it=>resItem(it.id, it.q)).filter(i=>i.q>0)
+        : (b.items||[]).map(it=>resItem(it.id, it.q)).filter(i=>i.q>0);
+      return { seq:gi+1, all: !!(g&&g.all), tsLabel: g&&!g.all ? (tglJam(g.ts)) : '', items:its,
+               subtotal: its.reduce((s,i)=>s+i.subtotal,0) };
+    }).filter(g=>g.items.length);
+    const itemsFix = grup.flatMap(g=>g.items); // utk kompat (total tetap dari b.total)
+    return { items:itemsFix, grup, subtotal: b.subtotal!=null?b.subtotal:b.total, diskon: b.diskon||0, total:b.total,
              bayar:0, kembali:0, noTransaksi:'BON', metode:'BON (digantung)',
              kasir:kasirAktif.nama, member: b.nama || null, waktu:new Date().toLocaleString('id-ID') };
   }
@@ -1575,13 +1616,26 @@
     const toId=x=>'Rp'+(Number(x||0)).toLocaleString('id-ID');
     const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const div = d.dividerSolid ? 'border-top:1px solid #000' : 'border-top:1px dashed #000';
-    const rows=n.items.map(i=>{
+    const escRow = i => {
       const nm=esc(i.nama_produk)+(i.qty>1?` <span style="color:#777">x${i.qty}</span>`:'');
       const row=`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nm}</span><span style="flex-shrink:0">${toId(i.subtotal)}</span></div>`;
       // Klasik 2: tampilkan harga satuan (@Rp) di bawah nama barang
       if(d.showHargaSatuan) return row+`<div style="font-size:10px;color:#555">@${toId(i.harga)}</div>`;
       return row;
-    }).join('');
+    };
+    // Nota bon gantung: kelompokkan item per-kiriman (+ subtotal per grup).
+    let rows='';
+    if(n.grup && n.grup.length){
+      n.grup.forEach(g=>{
+        const gh=(g.all?'Semua':'Grup '+g.seq)+(g.tsLabel?' &middot; '+esc(g.tsLabel):'');
+        rows+='<div style="margin:3px 0 1px;font-weight:bold;font-size:11px;color:#333">'
+          +'&rsaquo; '+gh+'</div>'
+          +g.items.map(escRow).join('')
+          +'<div style="display:flex;justify-content:space-between;margin:1px 0 5px"><span style="font-weight:bold">Subtotal '+gh+'</span><span style="font-weight:bold">'+toId(g.subtotal)+'</span></div>';
+        });
+    } else {
+      rows = n.items.map(escRow).join('');
+    }
     // Status/SN produk DIGITAL (pulsa/tagihan) utk struk — tampil per item.
     const digitalHtml = (Array.isArray(n.digital)&&n.digital.length) ? '<div style="'+div+';margin:4px 0"></div>'
       +n.digital.map(d=>{
@@ -1658,7 +1712,7 @@
     if(TOKO_INFO.telepon) wrapCenter('Telp: '+esc(TOKO_INFO.telepon));
     line(divider);
     if(d.infoSebelumItems){ infoLeft(); line(divider); }
-    n.items.forEach(i=>{
+    const emitItem = i=>{
       const nm=esc(i.nama_produk);
       const harga=rp(i.subtotal);
       const qtyS=i.qty>1?' x'+i.qty:'';
@@ -1669,7 +1723,20 @@
       B.push('\x1ba\x00'+show+qtyS+(' '.repeat(Math.max(1,32-(show.length+qtyS.length)-harga.length)))+harga+'\n');
       // Klasik 2: harga satuan (@Rp) di baris bawah item.
       if(d.showHargaSatuan) B.push('\x1ba\x00@'+rp(i.harga)+'\n');
-    });
+    };
+    if(n.grup && n.grup.length){
+      // Nota bon gantung: pisahkan per-kiriman + Subtotal tiap grup.
+      n.grup.forEach(g=>{
+        // Nama barang bagian kiriman (bon lama tanpa sesi = satu grup 'Semua'); label ≤32 kolom.
+        const gh=(g.all?'Semua':'Grup '+g.seq)+(g.tsLabel?' '+esc(g.tsLabel):'');
+        B.push('\x1ba\x00\x1bE\x01-- '+gh.slice(0,28)+' --\x1bE\x00\n');
+        g.items.forEach(emitItem);
+        totalLine('Subtotal '+gh, rp(g.subtotal));
+        line('- - - -');
+      });
+    } else {
+      n.items.forEach(emitItem);
+    }
     line(divider);
     if(d.totalPertama){ B.push('\x1bE\x01\x1ba\x00'+'TOTAL'+' '.repeat(Math.max(1,32-5-(rp(n.total).length)))+rp(n.total)+'\x1bE\x00\n'); }
     totalLine('Subtotal', rp(n.subtotal));
