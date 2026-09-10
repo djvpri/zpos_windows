@@ -2527,7 +2527,7 @@
         continue;
       }
       bon.push({ nama, items, total:Number(b.total)||0, bonId:id, sess:sesiServer||undefined });
-      ada.add(id); tambah++;
+      tambah++;
     }
     // Prune ORPHAN: hapus bon lokal yg bonId>0 TAPI sudah tak ada di daftar aktif web
     // (web uda dihapus/auto-selesai, kasir tak pernah dpt ACK → ngendon b25 dsb).
