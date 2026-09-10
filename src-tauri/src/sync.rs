@@ -1059,10 +1059,12 @@ impl SyncClient {
     /// Simpan bon gantung ke server (`/api/bon`) supaya tampil di Laporan web.
     /// `produk` = {"<produk_id>": qty} hanya utk produk ASLI (id>0); item virtual
     /// (id negatif) tidak bisa digantung ke server (bon web butuh ref produk).
-    pub fn kirim_bon(&self, nama: &str, produk: &str, total: i64) -> Result<i64, String> {
+    pub fn kirim_bon(&self, nama: &str, produk: &str, total: i64, harga: &str) -> Result<i64, String> {
+        let harga_val = serde_json::from_str::<Value>(harga).unwrap_or(Value::Object(Default::default()));
         let body: Value = serde_json::json!({
             "nama": if nama.trim().is_empty() { serde_json::Value::Null } else { serde_json::Value::String(nama.to_string()) },
             "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
+            "harga": harga_val,
             "total": total,
         });
         let resp = self.http.post(self.endpoint("/api/bon"))
@@ -1080,9 +1082,12 @@ impl SyncClient {
     /// kasir saat bon ditarik → ditambah item → disimpan ulang. `produk` = FULL
     /// daftar item final ({"<produk_id>": qty}); web hitung delta stok-hold.
     /// 404 = bon tak ada → anggap gagal (kasir jangan timpa lokal tanpa server).
-    pub fn edit_bon(&self, bon_id: i64, produk: &str, total: i64) -> Result<(), String> {
+    pub fn edit_bon(&self, bon_id: i64, produk: &str, total: i64, harga: &str) -> Result<(), String> {
+        let harga_val =
+            serde_json::from_str::<Value>(harga).unwrap_or(Value::Object(Default::default()));
         let body: Value = serde_json::json!({
             "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
+            "harga": harga_val,
             "total": total,
         });
         let resp = self.http.patch(self.endpoint(&format!("/api/bon/{bon_id}")))
