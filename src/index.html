@@ -1168,12 +1168,17 @@
         if(zposIsTauri() && Object.keys(webProduk).length){
           if(b.bonId>0){
             tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga) })
-              .then(()=>{})
-              .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','edit_bon gagal bonId='+b.bonId+' | '+String(m)); });
+              .then(()=>{ b.editPending=false; simpanBonStorage(); })
+              .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','edit_bon gagal bonId='+b.bonId+' | '+String(m));
+                // Lapis 1: edit TAK sampai ke web → tandai pending, RETRY di siklus sync
+                // (retryEditBon). Lokal tetap versi terbaru (kasir uda lihat barangnya) —
+                // jangan rollback; retryEditBon kirim ulang sampai ACK.
+                b.editPending=true; simpanBonStorage(); renderBonList();
+                toast('Bon tersimpan lokal — sinkron edit ditunda, retry otomatis.'); });
           } else {
             tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga) })
-              .then(serverId=>{ b.bonId=serverId; simpanBonStorage(); })
-              .catch(()=>{});
+              .then(serverId=>{ b.bonId=serverId; b.editPending=false; simpanBonStorage(); })
+              .catch(()=>{ b.editPending=true; simpanBonStorage(); renderBonList(); });
           }
         }
         // lepas ref tarik — bon tetap di daftar, isi sudah diperbarui
@@ -1203,8 +1208,8 @@
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
       tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga) })
-        .then(serverId=>{ bon[idx].bonId=serverId; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
-        .catch(()=>{}); // offline → tetap lokal, tak masuk web
+        .then(serverId=>{ bon[idx].bonId=serverId; bon[idx].editPending=false; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
+        .catch(()=>{ bon[idx].editPending=true; simpanBonStorage(); renderBonList(); }); // offline → tetap lokal, retry via replayBonServer
     }
     toast('Bon digantung atas nama '+(pn||'Umum'));
     // Siapkan nota bon utk opsi cetak (header BON, belum lunas). Set notaTerakhir
@@ -1272,7 +1277,7 @@
       : list.map((b,x)=>`
         <div class="bonRow">
           <i class="bi bi-bookmark" style="color:#ffb347"></i>
-          <div class="nm"><b style="color:#ffb347">#${b.bonId||('L'+(b.no||x+1))}</b> · ${b.nama||'Umum'}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}</div>
+          <div class="nm"><b style="color:#ffb347">#${b.bonId||('L'+(b.no||x+1))}</b> · ${b.nama||'Umum'}${_tarikBon===b?' <span style="color:#4ade80;font-size:11px">· ditarik, belum bayar</span>':''}${b.lunasPending?' <span style="color:#fbbf24;font-size:11px">· lunas, menyinkronkan</span>':''}${b.hapusPending?' <span style="color:#f87171;font-size:11px">· menghapus…</span>':''}${b.editPending?' <span style="color:#60a5fa;font-size:11px">· mengedit, menyinkronkan</span>':''}</div>
           <button onclick="tarikBon(${bon.indexOf(b)})">Tarik</button>
           <span class="del" onclick="hapusBon(${bon.indexOf(b)})" title="Hapus"><i class="bi bi-trash3"></i></span>
         </div>`).join('');
@@ -1285,6 +1290,7 @@
     const b=bon[x];
     if(b.lunasPending){ toast('Bon sudah dibayar — menunggu sinkron tanda lunas'); return; }
     if(b.hapusPending){ toast('Bon sedang dihapus — menunggu sinkron'); return; }
+    if(b.editPending){ toast('Bon menunggu sinkron edit — coba lagi sebentar'); return; }
     if(_tarikBon === b){ toast('Bon ini sudah ditarik ke keranjang'); return; }
     cart = b.items.map(it=>({id:it.id,q:it.q,h:it.h}));
     if(b.vmap) Object.assign(virtualProduk, b.vmap); // restore item virtual (id negatif) biar tampil & bisa ditebus
@@ -1335,6 +1341,7 @@
     if (x < 0 || x >= bon.length) { tutupKonfBon(); return; }
     const b = bon[x];
     if (b.lunasPending){ tutupKonfBon(); toast('Bon sudah lunas — tak bisa dihapus'); return; }
+    if (b.editPending){ tutupKonfBon(); toast('Bon menunggu sinkron edit — coba lagi sebentar'); return; }
     const pernahTerkirim = !!(b.bonId && b.bonId>0);
     if(_tarikBon === b){ _tarikBon=null; _bonId=0; } // hapus bon yg lagi ditarik → bersihkan ref
     if(pernahTerkirim && zposIsTauri()){
@@ -2478,42 +2485,62 @@
     }
     await retryTandaiBon(); // tandai ulang bon lunasPending yg gagal sync sebelumnya
     await retryHapusBon();  // retry hapus bon hapusPending yg gagal sync sebelumnya
+    await retryEditBon();   // retry edit bon editPending yg gagal sync sebelumnya
     logBonState('replay selesai');
   }
   // Tarik bon gantung AKTIF dari web yg dibuat device/kasir lain, merge ke daftar
-  // lokal. ANTI-DUPLIKAT & ANTI-OVERWRITE: skip bon yg `bonId` uda ada di lokal
-  // (versi lokal tetap dihormati), hanya tambah yg BENAR-BENAR baru. Dipanggil
-  // setelah sync_remote sukses (pull). Bon yg sedang ditarik _tarikBon tetap.
+  // lokal. Lapis 2: server = sumber kebenaran utk bon IDLE (tak dipakai kasir ini).
+  // Bon lokal yg `bonId` uda ada:
+  //   - IDLE (bukan lunasPending/hapusPending/editPending/_tarikBon) → TIMPA dgn
+  //     versi server (nama/items/total. sesi & vmap lokal dipertahankan) → dua sisi
+  //     selalu sama walau bon diedit di web/device lain.
+  //   - SEDANG DIPAKAI (pending/ditarik) → SKIP (edit lokal belum tercermin di web;
+  //     jangan ditimpa data basi).
+  // Bon baru → tambah. Dipanggil setelah sync_remote sukses (pull).
   async function mergeBonSync(){
     if(!zposIsTauri()) return;
     let raw=null; try{ raw=await tinv('ambil_bon_sync'); }catch(e){ return; }
     if(!raw) return;
     let list=[]; try{ list=JSON.parse(raw); }catch(e){ return; }
-    const ada=new Set(bon.filter(b=>b.bonId>0).map(b=>b.bonId));
-    let tambah=0;
+    const lokalOpts={}; // bonId → bon lokal (timpa bila IDLE; fallback harga)
+    for(const b of bon){ if(b.bonId>0) lokalOpts[b.bonId]=b; }
+    let tambah=0, timpa=0;
     for(const b of list){
-      const id=Number(b.id); if(!id||ada.has(id)) continue;
+      const id=Number(b.id); if(!id) continue;
       const nama=(b.nama||'').trim();
       const hrs=(b.harga&&typeof b.harga==='object')?b.harga:{};
       const items=Object.entries(b.produk||{}).map(([pid,q])=>({id:Number(pid),q:Number(q),h:(hrs[pid]!=null?Number(hrs[pid]):undefined)}))
         .filter(it=>it.id>0 && it.q>0);
       if(!items.length) continue;
-      bon.push({ nama, items, total:Number(b.total)||0, bonId:id });
+      const sesiServer = Array.isArray(b.sesi) && b.sesi.length
+        ? b.sesi.map(s=>({ t:s.t, items:Object.entries(s.p||{}).map(([pid,q])=>({id:Number(pid),q:Number(q)})).filter(it=>it.id>0&&it.q>0) })).filter(g=>g.items.length)
+        : null;
+      const lokal = lokalOpts[id];
+      if(lokal){
+        // IDLE saja yg boleh ditimpa — pending/ditarik = punya perubahan lokal belum di-web.
+        if(lokal.lunasPending || lokal.hapusPending || lokal.editPending || lokal===_tarikBon) continue;
+        lokal.nama = nama;
+        lokal.items = items;
+        lokal.total = Number(b.total)||0;
+        if(sesiServer) lokal.sess = sesiServer;
+        timpa++;
+        continue;
+      }
+      bon.push({ nama, items, total:Number(b.total)||0, bonId:id, sess:sesiServer||undefined });
       ada.add(id); tambah++;
     }
-    if(tambah){ simpanBonStorage(); renderBonList(); }
     // Prune ORPHAN: hapus bon lokal yg bonId>0 TAPI sudah tak ada di daftar aktif web
     // (web uda dihapus/auto-selesai, kasir tak pernah dpt ACK → ngendon b25 dsb).
-    // JANGAN sentuh: hapusPending (retry hapus), lunasPending (retry ACK), bonId=0
-    // (offline belum masuk web), atau yg sedang ditarik (_tarikBon belum lunas).
+    // JANGAN sentuh: hapusPending (retry hapus), lunasPending (retry ACK), editPending
+    // (retry edit), bonId=0 (offline belum masuk web), atau yg sedang ditarik.
     if(list && list.length>=0){
       const webIds=new Set(list.map(b=>Number(b.id)));
-      const prune=bon.filter(b=>b.bonId>0 && !b.lunasPending && !b.hapusPending && b!==_tarikBon && !webIds.has(b.bonId));
+      const prune=bon.filter(b=>b.bonId>0 && !b.lunasPending && !b.hapusPending && !b.editPending && b!==_tarikBon && !webIds.has(b.bonId));
       if(prune.length){
         for(const p of prune){ const i=bon.indexOf(p); if(i>=0) bon.splice(i,1); }
-        simpanBonStorage(); renderBonList();
       }
-      logBonState('merge web(aktif) tambah='+tambah+' web_bon='+list.length+' prune='+prune.length);
+      if(tambah||timpa||prune.length){ simpanBonStorage(); renderBonList(); }
+      logBonState('merge web(aktif) tambah='+tambah+' timpa='+timpa+' web_bon='+list.length+' prune='+prune.length);
     }
   }
   // Diagnosa bon gantung: dump isi array `bon` lokal (jumlah + tiap entri: id server,
@@ -2560,6 +2587,29 @@
         b.hapusPending=false; const i=bon.indexOf(b); if(i>=0) bon.splice(i,1);
         simpanBonStorage(); renderBonList();
       }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryHapusBon gagal bonId='+b.bonId+' | '+String(m)); }
+    }
+  }
+  // Lapis 1: retry EDIT bon yg gagal sampai ke web (jaringan putus saat simpan-ulang
+  // bon). Lokal sudah versi terbaru (sumber) — kirim ulang isi bon ke web sampai ACK,
+  // baru clear flag. IDEMPOTEN: PATCH produk = set isi FINAL, jadi aman diulang.
+  // Bon `editPending` yg belum punya bonId (create gagal) → kirim_bon (create).
+  async function retryEditBon(){
+    if(!zposIsTauri()) return;
+    const base=localStorage.getItem('zpos_base'); if(!base) return;
+    for(const b of [...bon]){
+      if(!b.editPending || b.lunasPending || b.hapusPending || b===_tarikBon) continue;
+      const webProduk={}, webHarga={};
+      (b.items||[]).forEach(it=>{ if(it.id>0){ webProduk[it.id]=(webProduk[it.id]||0)+it.q; if(it.h!=null) webHarga[it.id]=it.h; } });
+      if(!Object.keys(webProduk).length) continue; // semua item virtual → tak bisa ke web
+      try{
+        if(b.bonId>0){
+          await tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga) });
+        } else {
+          const serverId=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga) });
+          b.bonId=serverId;
+        }
+        b.editPending=false; simpanBonStorage(); renderBonList();
+      }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('BON','retryEditBon gagal bonId='+(b.bonId||0)+' | '+String(m)); }
     }
   }
   async function autoSync(){
