@@ -1631,7 +1631,7 @@
         rows+='<div style="margin:3px 0 1px;font-weight:bold;font-size:11px;color:#333">'
           +'&rsaquo; '+gh+'</div>'
           +g.items.map(escRow).join('')
-          +'<div style="display:flex;justify-content:space-between;margin:1px 0 5px"><span style="font-weight:bold">Subtotal '+gh+'</span><span style="font-weight:bold">'+toId(g.subtotal)+'</span></div>';
+          +'<div style="display:flex;justify-content:space-between;margin:1px 0 5px"><span style="font-weight:bold">Subtotal</span><span style="font-weight:bold">'+toId(g.subtotal)+'</span></div>';
         });
     } else {
       rows = n.items.map(escRow).join('');
@@ -1731,7 +1731,7 @@
         const gh=(g.all?'Semua':'Grup '+g.seq)+(g.tsLabel?' '+esc(g.tsLabel):'');
         B.push('\x1ba\x00\x1bE\x01-- '+gh.slice(0,28)+' --\x1bE\x00\n');
         g.items.forEach(emitItem);
-        totalLine('Subtotal '+gh, rp(g.subtotal));
+        totalLine('Subtotal', rp(g.subtotal));
         line('- - - -');
       });
     } else {
