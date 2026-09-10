@@ -167,4 +167,26 @@ ok('normalSesi sanitasi input', () => {
   assert.deepEqual(normalSesi([{ p: { 175: 1 } }]), [])   // tanpa t
 })
 
-console.log(`\n${n}/9 PASS`)
+// 10) REGRESI: ts grup harus berbeda per grup, TIDAK boleh semua Date.now()
+ok('ts per grup unik (bug: semua grup dapat waktu sinkron)', () => {
+  // sesiServer dari server: `t` ISO → WAJIB dikonversi ke `ts` ms
+  const sesiFromServer = [
+    { t: '2026-09-09T07:41:41.200Z', p: { 175: 1 }, h: { 175: 21000 } },
+    { t: '2026-09-10T08:55:57.298Z', p: { 175: 4 }, h: { 175: 15000 } },
+  ]
+  const sesiMs = (g) => {
+    const v = (g.ts != null ? g.ts : g.t)
+    if (v == null) return Date.now()
+    const nn = Number(v); if (Number.isFinite(nn) && nn > 1e11) return nn
+    const d = Date.parse(v); return Number.isFinite(d) ? d : Date.now()
+  }
+  const lokal = sesiFromServer.map(s => ({ ts: sesiMs(s), items: [] }))
+  const t0 = lokal[0].ts, t1 = lokal[1].ts
+  assert.notEqual(t0, t1, 'ts tiap grup HARUS beda')
+  assert.equal(new Date(t0).toISOString(), '2026-09-09T07:41:41.200Z')
+  assert.equal(new Date(t1).toISOString(), '2026-09-10T08:55:57.298Z')
+  // dan webSesi kirim balik ISO yg sama (round-trip tak geser)
+  assert.equal(new Date(sesiMs({ ts: t0 })).toISOString(), '2026-09-09T07:41:41.200Z')
+})
+
+console.log(`\n${n}/10 PASS`)

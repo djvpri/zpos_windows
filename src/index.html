@@ -745,8 +745,14 @@
   // Sesi bon → payload server: [{t:ISO, p:{id:qty}, h:{id:harga}}]. Server simpan
   // apa adanya → nota web tampilkan harga tiap grup sesuai saat grup dibuat.
   // Dipakai di semua jalur kirim_bon/edit_bon (simpan ulang, replay, retry edit).
+  const sesiMs = (g)=>{
+    const v=(g.ts!=null?g.ts:g.t);
+    if(v==null) return Date.now();
+    const n=Number(v); if(Number.isFinite(n)&&n>1e11) return n;   // epoch ms
+    const d=Date.parse(v); return Number.isFinite(d)?d:Date.now(); // ISO string
+  };
   const webSesi = (b)=> (Array.isArray(b&&b.sess)? b.sess:[]).map(g=>({
-    t: new Date((g.ts!=null?g.ts:Date.now())).toISOString(),
+    t: new Date(sesiMs(g)).toISOString(),
     p: (g.items||[]).reduce((o,it)=>{ if(it.id>0) o[it.id]=(o[it.id]||0)+it.q; return o; },{}),
     h: (g.items||[]).reduce((o,it)=>{ if(it.id>0 && it.h!=null) o[it.id]=it.h; return o; },{}),
   })).filter(g=>Object.keys(g.p).length);
@@ -1169,7 +1175,7 @@
         its.push(h != null ? { id: it.id, q: take, h } : { id: it.id, q: take });
         need[it.id] = rem - take;
       }
-      if(its.length) out.push({ ts: (g.ts != null) ? g.ts : Date.now(), items: its });
+      if(its.length) out.push({ ts: sesiMs(g), items: its });
     }
     // Sisa (barang BARU) → grup baru dgn harga SEKARANG.
     const left = Object.entries(need).filter(([,q]) => q > 0);
@@ -2561,10 +2567,14 @@
       if(!items.length) continue;
       // Sesi server bawa `h` (harga per-grup) → simpan per item biar nota grup
       // pakai harga saat grup dibuat. Fallback: harga global bon (`hrs`) → undefined.
+      // Struktur LOKAL sess[] = { ts: epoch_ms, items:[{id,q,h}] } — `t` (ISO) dari
+      // server WAJIB dikonversi ke `ts` ms, kalau tidak `g.ts` undefined → webSesi
+      // jatuh ke Date.now() → SEMUA grup dapat waktu sinkron (bug timestamp sama).
       const sesiServer = Array.isArray(b.sesi) && b.sesi.length
         ? b.sesi.map(s=>{
             const hs=(s.h&&typeof s.h==='object')?s.h:{};
-            return { t:s.t, items:Object.entries(s.p||{}).map(([pid,q])=>{
+            const ms=(()=>{ const v=(s.ts!=null?s.ts:s.t); const n=Number(v); if(Number.isFinite(n)&&n>1e11) return n; const d=Date.parse(v); return Number.isFinite(d)?d:undefined; })();
+            return { ts:ms, items:Object.entries(s.p||{}).map(([pid,q])=>{
               const hh=(hs[pid]!=null)?Number(hs[pid]):(hrs[pid]!=null?Number(hrs[pid]):undefined);
               return hh!=null ? {id:Number(pid),q:Number(q),h:hh} : {id:Number(pid),q:Number(q)};
             }).filter(it=>it.id>0&&it.q>0) };
