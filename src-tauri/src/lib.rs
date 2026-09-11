@@ -517,16 +517,17 @@ fn daftar_kas_keluar(state: State<AppState>, base_url: String, shift_id: i64) ->
 }
 
 // Simpan bon gantung ke server → POST /api/bon. `produk` = {"<id>": qty} (JSON)
-// hanya item asli (id>0); item virtual tidak bisa digantung ke web bon.
+// Item virtual (id negatif, id stabil) IKUT dikirim; namanya dibawa `vmap`
+// supaya web bisa menampilkan barisnya (dulu virtual dibuang → total web selisih).
 #[tauri::command]
-fn kirim_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, produk: String, total: i64, harga: String, sesi: String) -> Result<i64, String> {
+fn kirim_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, produk: String, total: i64, harga: String, sesi: String, vmap: String) -> Result<i64, String> {
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
     let meta_tok: String = conn.query_row(
         "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
     ).unwrap_or_default();
     let c = sync::SyncClient::new(base_url, meta_tok);
-    let r = c.kirim_bon(&nama, &produk, total, &harga, &sesi);
+    let r = c.kirim_bon(&nama, &produk, total, &harga, &sesi, &vmap);
     match &r {
         Ok(id) => submit_log(&app, &format!("bon gantung {nama} → id {id}")),
         Err(e) => submit_log(&app, &format!("bon gantung GAGAL ({nama}): {e}")),
@@ -537,14 +538,14 @@ fn kirim_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, na
 // Ubah isi bon yang sudah ada di server (tarik→tambah item→simpan ulang) →
 // PATCH /api/bon/{id} body { produk, total }. Web hitung delta stok-hold utk item baru.
 #[tauri::command]
-fn edit_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64, produk: String, total: i64, harga: String, sesi: String) -> Result<(), String> {
+fn edit_bon(state: State<AppState>, app: tauri::AppHandle, base_url: String, bon_id: i64, produk: String, total: i64, harga: String, sesi: String, vmap: String) -> Result<(), String> {
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
     let meta_tok: String = conn.query_row(
         "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
     ).unwrap_or_default();
     let c = sync::SyncClient::new(base_url, meta_tok);
-    let r = c.edit_bon(bon_id, &produk, total, &harga, &sesi);
+    let r = c.edit_bon(bon_id, &produk, total, &harga, &sesi, &vmap);
     match &r {
         Ok(()) => submit_log(&app, &format!("bon #{bon_id} diubah isinya di server")),
         Err(e) => submit_log(&app, &format!("edit bon #{bon_id} GAGAL: {e}")),

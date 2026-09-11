@@ -1059,7 +1059,7 @@ impl SyncClient {
     /// Simpan bon gantung ke server (`/api/bon`) supaya tampil di Laporan web.
     /// `produk` = {"<produk_id>": qty} hanya utk produk ASLI (id>0); item virtual
     /// (id negatif) tidak bisa digantung ke server (bon web butuh ref produk).
-    pub fn kirim_bon(&self, nama: &str, produk: &str, total: i64, harga: &str, sesi: &str) -> Result<i64, String> {
+    pub fn kirim_bon(&self, nama: &str, produk: &str, total: i64, harga: &str, sesi: &str, vmap: &str) -> Result<i64, String> {
         let harga_val = serde_json::from_str::<Value>(harga).unwrap_or(Value::Object(Default::default()));
         let sesi_val = serde_json::from_str::<Value>(sesi).unwrap_or(Value::Array(Vec::new()));
         let body: Value = serde_json::json!({
@@ -1067,6 +1067,7 @@ impl SyncClient {
             "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
             "harga": harga_val,
             "sesi": sesi_val,
+            "vmap": serde_json::from_str::<Value>(vmap).unwrap_or(Value::Object(Default::default())),
             "total": total,
         });
         let resp = self.http.post(self.endpoint("/api/bon"))
@@ -1084,7 +1085,7 @@ impl SyncClient {
     /// kasir saat bon ditarik → ditambah item → disimpan ulang. `produk` = FULL
     /// daftar item final ({"<produk_id>": qty}); web hitung delta stok-hold.
     /// 404 = bon tak ada → anggap gagal (kasir jangan timpa lokal tanpa server).
-    pub fn edit_bon(&self, bon_id: i64, produk: &str, total: i64, harga: &str, sesi: &str) -> Result<(), String> {
+    pub fn edit_bon(&self, bon_id: i64, produk: &str, total: i64, harga: &str, sesi: &str, vmap: &str) -> Result<(), String> {
         let harga_val =
             serde_json::from_str::<Value>(harga).unwrap_or(Value::Object(Default::default()));
         let sesi_val = serde_json::from_str::<Value>(sesi).unwrap_or(Value::Array(Vec::new()));
@@ -1092,6 +1093,7 @@ impl SyncClient {
             "produk": serde_json::from_str::<Value>(produk).unwrap_or(Value::Object(Default::default())),
             "harga": harga_val,
             "sesi": sesi_val,
+            "vmap": serde_json::from_str::<Value>(vmap).unwrap_or(Value::Object(Default::default())),
             "total": total,
         });
         let resp = self.http.patch(self.endpoint(&format!("/api/bon/{bon_id}")))

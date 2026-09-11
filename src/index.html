@@ -741,10 +741,12 @@
     const n=Number(v); if(Number.isFinite(n)&&n>1e11) return n;   // epoch ms
     const d=Date.parse(v); return Number.isFinite(d)?d:Date.now(); // ISO string
   };
+  // Petakan sesi lokal → bentuk web: {t, p, h}. Item virtual (id negatif) IKUT
+  // (idnya stabil via vidVirtual) supaya grup di web lengkap & Σ grup = total.
   const webSesi = (b)=> (Array.isArray(b&&b.sess)? b.sess:[]).map(g=>({
     t: new Date(sesiMs(g)).toISOString(),
-    p: (g.items||[]).reduce((o,it)=>{ if(it.id>0) o[it.id]=(o[it.id]||0)+it.q; return o; },{}),
-    h: (g.items||[]).reduce((o,it)=>{ if(it.id>0 && it.h!=null) o[it.id]=it.h; return o; },{}),
+    p: (g.items||[]).reduce((o,it)=>{ o[it.id]=(o[it.id]||0)+it.q; return o; },{}),
+    h: (g.items||[]).reduce((o,it)=>{ if(it.h!=null) o[it.id]=it.h; return o; },{}),
   })).filter(g=>Object.keys(g.p).length);
   // Ikon produk dipilih dari nama kategori (Bootstrap Icons). Match kata kunci
   // lowercase; tak cocok → kotak umum. `ponytail:` mapping penuh per kategori by
@@ -1024,10 +1026,29 @@
   function lainHapus(i){ lainItems.splice(i,1); renderLainItems(); }
   function lainChgQty(i,d){ if(lainItems[i]){ lainItems[i].qty=Math.max(1, lainItems[i].qty+d); updateLainTotal(); } }
   function lainChgHarga(i,v){ if(lainItems[i]){ lainItems[i].harga=parseInt(v||'0',10)||0; updateLainTotal(); } }
+  // Id virtual STABIL dari nama+harga (bukan Date.now+rand): biar id sama tiap
+  // kali barang identik masuk, bisa dirujuk lintas device, dan tersimpan di
+  // server tanpa berubah tiap edit bon. Barang beda nama/harga → id beda →
+  // baris terpisah (perilaku yg diinginkan). Rentang negatif = "bukan produk
+  // katalog" (dibedakan dari id katalog yg positif).
+  // FNV-1a 32-bit dicampur 2 putaran -> 53-bit; tumbukan praktis nol.
+  function vidVirtual(nama, harga){
+    const s=String(nama)+'\u0000'+String(harga);
+    let h=2166136261;
+    for(let r=0;r<2;r++){
+      for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+      h=(h^r)>>>0;
+    }
+    // Gabung dgn putaran kedua biar lebih dari 32 bit; jaga tetap negatif & != 0.
+    let g=2166136261;
+    for(let i=s.length-1;i>=0;i--){ g^=s.charCodeAt(i); g=Math.imul(g,16777619)>>>0; }
+    const v=((h*4294967296)+g)%9007199254740991;
+    return -(v || 1);
+  }
   function masukKeranjangLain(){
     if(!lainItems.length){ toast('Belum ada item.'); return; }
     lainItems.forEach(it=>{
-      const vid=-(Date.now()+Math.floor(Math.random()*10000));
+      const vid=vidVirtual(it.nama, it.harga);
       virtualProduk[vid]={ nama:it.nama, harga:it.harga };
       // Sama spt add(): grup baris = grup yg sedang AKTIF, dan baris digabung
       // hanya kalau id DAN g sama. Tanpa ini item "Lainnya" selalu jatuh ke
@@ -1196,11 +1217,17 @@
     const sub=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaBaris(c).h; return s+h*c.q; },0);
     const disc=diskonCart;            // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
     const webProduk = {};
-    cart.forEach(c=>{ if(c.id>0) webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
+    // Item virtual (id negatif) IKUT dikirim — idnya stabil (vidVirtual) dan
+    // namanya dikirim via `vmap`, jadi web bisa menampilkan barisnya & total
+    // bon di web = total kasir (dulu virtual dibuang → nota web selalu selisih).
+    cart.forEach(c=>{ webProduk[c.id]=(webProduk[c.id]||0)+c.q; });
     // Opsi A: harga satuan terkunci per produk asli, dikirim ke server biar bon
     // tetap di harga saat digantung (device lain / web pull ikut harga ini).
     const webHarga = {};
-    cart.forEach(c=>{ if(c.id>0 && hargaIt(c)!=null) webHarga[c.id]=hargaIt(c); });
+    cart.forEach(c=>{ if(hargaIt(c)!=null) webHarga[c.id]=hargaIt(c); });
+    // vmap: {idVirtual: {nama, harga}} — sumber nama utk baris virtual di web.
+    const webVmap = {};
+    cart.forEach(c=>{ if(c.id<0 && virtualProduk[c.id]) webVmap[c.id]=virtualProduk[c.id]; });
     const base = localStorage.getItem('zpos_base') || '';
     const escH=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const save = (idx)=>{ const b=bon[idx]; b.nama=pn;
@@ -1217,7 +1244,7 @@
       else{
         // Item virtual (id negatif) dari cart tsb + items lama uda tergabung di cart
         // (tarikBon restore items bon ke cart). vmap pertahankan milik bon lama.
-        if(webProduk) b.vmap = Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]]));
+        b.vmap = webVmap;  // item virtual milik cart saat ini (id stabil → tak berubah)
         b.sess = sesiDariCart(cart, _tsGrup);  // kelompok per-grup: pengelompokan lurus, urutan stabil
         _tsGrup = null;
         save(idx);
@@ -1226,7 +1253,7 @@
         // (belum pernah masuk web) → create baru via kirim_bon.
         if(zposIsTauri() && Object.keys(webProduk).length){
           if(b.bonId>0){
-            tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)) })
+            tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)), vmap: JSON.stringify(webVmap) })
               .then(()=>{ b.editPending=false; simpanBonStorage(); })
               .catch((e)=>{ const m=(e&&e.message?e.message:e)||e; logErr('BON','edit_bon gagal bonId='+b.bonId+' | '+String(m));
                 // Lapis 1: edit TAK sampai ke web → tandai pending, RETRY di siklus sync
@@ -1235,7 +1262,7 @@
                 b.editPending=true; simpanBonStorage(); renderBonList();
                 toast('Bon tersimpan lokal — sinkron edit ditunda, retry otomatis.'); });
           } else {
-            tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)) })
+            tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)), vmap: JSON.stringify(webVmap) })
               .then(serverId=>{ b.bonId=serverId; b.editPending=false; simpanBonStorage(); })
               .catch(()=>{ b.editPending=true; simpanBonStorage(); renderBonList(); });
           }
@@ -1260,14 +1287,15 @@
                vmap: Object.fromEntries(cart.filter(c=>c.id<0 && virtualProduk[c.id]).map(c=>[c.id, virtualProduk[c.id]])) });
     simpanBonSeq();
     simpanBonStorage(); // persist lokal → bon tak hilang saat restart app
-    // Sinkron ke server biar tampil di Laporan web (tab Bon). Hanya item asli
-    // (id>0) — web bon butuh ref produk; item virtual (id negatif) tetap lokal.
+    // Sinkron ke server biar tampil di Laporan web (tab Bon). Item virtual (id
+    // negatif, id stabil) IKUT dikirim + namanya via `vmap` → barisnya tampil di
+    // web dan total bon web = total kasir.
     if(zposIsTauri() && Object.keys(webProduk).length){
       const idx = bon.length-1;
       // WAJIB kirim baseUrl: Rust fn kirim_bon butuh arg base_url; kalau nggak,
       // Tauri gagal deserialize arg → reject diam-diam (.catch) → TANPA log &
       // bon tak pernah masuk web. (Bug: versi lama lupa isi baseUrl.)
-      tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(bon[idx])) })
+      tinv('kirim_bon',{ baseUrl:base, nama: pn, produk: JSON.stringify(webProduk), total: sub-disc, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(bon[idx])), vmap: JSON.stringify(webVmap) })
         .then(serverId=>{ bon[idx].bonId=serverId; bon[idx].editPending=false; simpanBonStorage(); }) // persist bonId → cegah replay duplikat
         .catch(()=>{ bon[idx].editPending=true; simpanBonStorage(); renderBonList(); }); // offline → tetap lokal, retry via replayBonServer
     }
@@ -2544,10 +2572,12 @@
       if(b.bonId>0) continue; // sudah terkirim ke server
       const webProduk={};
       const webHarga={};
-      if(b.items) b.items.forEach(it=>{ if(it.id>0){ webProduk[it.id]=(webProduk[it.id]||0)+it.q; if(it.h!=null) webHarga[it.id]=it.h; } });
-      if(!Object.keys(webProduk).length) continue; // semua item virtual → tak bisa
+      // Item virtual (id negatif) IKUT — idnya stabil & namanya dari b.vmap.
+      if(b.items) b.items.forEach(it=>{ webProduk[it.id]=(webProduk[it.id]||0)+it.q; if(it.h!=null) webHarga[it.id]=it.h; });
+      if(!Object.keys(webProduk).length) continue; // bon tanpa item → tak bisa ke web
+      const vmap=Object.fromEntries(Object.entries(b.vmap||{}).filter(([id])=>Number(id)<0));
       try{
-        const id=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk:JSON.stringify(webProduk), total:b.total||0, harga:JSON.stringify(webHarga), sesi:JSON.stringify(webSesi(b)) });
+        const id=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk:JSON.stringify(webProduk), total:b.total||0, harga:JSON.stringify(webHarga), sesi:JSON.stringify(webSesi(b)), vmap:JSON.stringify(vmap) });
         b.bonId=id; simpanBonStorage();
       }catch(e){} // offline lagi / gagal → biarkan retry siklus berikutnya
     }
@@ -2577,8 +2607,10 @@
       const id=Number(b.id); if(!id) continue;
       const nama=(b.nama||'').trim();
       const hrs=(b.harga&&typeof b.harga==='object')?b.harga:{};
+      // vmap server = {idVirtual: {nama,harga}} → restore item "Lainnya" lokal.
+      const vmapServer=(b.vmap&&typeof b.vmap==='object'&&!Array.isArray(b.vmap))?b.vmap:{};
       const items=Object.entries(b.produk||{}).map(([pid,q])=>({id:Number(pid),q:Number(q),h:(hrs[pid]!=null?Number(hrs[pid]):undefined)}))
-        .filter(it=>it.id>0 && it.q>0);
+        .filter(it=>it.q>0);
       if(!items.length) continue;
       // Sesi server bawa `h` (harga per-grup) → simpan per item biar nota grup
       // pakai harga saat grup dibuat. Fallback: harga global bon (`hrs`) → undefined.
@@ -2592,7 +2624,7 @@
             return { ts:ms, items:Object.entries(s.p||{}).map(([pid,q])=>{
               const hh=(hs[pid]!=null)?Number(hs[pid]):(hrs[pid]!=null?Number(hrs[pid]):undefined);
               return hh!=null ? {id:Number(pid),q:Number(q),h:hh} : {id:Number(pid),q:Number(q)};
-            }).filter(it=>it.id>0&&it.q>0) };
+            }).filter(it=>it.q>0) };
           }).filter(g=>g.items.length)
         : null;
       const lokal = lokalOpts[id];
@@ -2603,10 +2635,17 @@
         lokal.items = items;
         lokal.total = Number(b.total)||0;
         if(sesiServer) lokal.sess = sesiServer;
+        // vmap server menang bila ada; kalau kosong pertahankan vmap lokal
+        // (bon lama dari device ini yang belum pernah kirim vmap).
+        if(Object.keys(vmapServer).length){
+          lokal.vmap = vmapServer;
+          Object.assign(virtualProduk, vmapServer); // biar nama tampil & bisa ditebus
+        }
         timpa++;
         continue;
       }
-      bon.push({ nama, items, total:Number(b.total)||0, bonId:id, sess:sesiServer||undefined });
+      bon.push({ nama, items, total:Number(b.total)||0, bonId:id, sess:sesiServer||undefined,
+                 vmap: Object.keys(vmapServer).length?vmapServer:undefined });
       tambah++;
     }
     // Prune ORPHAN: hapus bon lokal yg bonId>0 TAPI sudah tak ada di daftar aktif web
@@ -2679,13 +2718,15 @@
     for(const b of [...bon]){
       if(!b.editPending || b.lunasPending || b.hapusPending || b===_tarikBon) continue;
       const webProduk={}, webHarga={};
-      (b.items||[]).forEach(it=>{ if(it.id>0){ webProduk[it.id]=(webProduk[it.id]||0)+it.q; if(it.h!=null) webHarga[it.id]=it.h; } });
-      if(!Object.keys(webProduk).length) continue; // semua item virtual → tak bisa ke web
+      // Item virtual (id negatif) IKUT — idnya stabil & namanya dari b.vmap.
+      (b.items||[]).forEach(it=>{ webProduk[it.id]=(webProduk[it.id]||0)+it.q; if(it.h!=null) webHarga[it.id]=it.h; });
+      if(!Object.keys(webProduk).length) continue; // bon tanpa item → tak bisa ke web
+      const vmap=Object.fromEntries(Object.entries(b.vmap||{}).filter(([id])=>Number(id)<0));
       try{
         if(b.bonId>0){
-          await tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)) });
+          await tinv('edit_bon',{ baseUrl:base, bonId:b.bonId, produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)), vmap: JSON.stringify(vmap) });
         } else {
-          const serverId=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)) });
+          const serverId=await tinv('kirim_bon',{ baseUrl:base, nama:b.nama||'', produk: JSON.stringify(webProduk), total: b.total||0, harga: JSON.stringify(webHarga), sesi: JSON.stringify(webSesi(b)), vmap: JSON.stringify(vmap) });
           b.bonId=serverId;
         }
         b.editPending=false; simpanBonStorage(); renderBonList();

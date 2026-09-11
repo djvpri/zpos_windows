@@ -95,6 +95,16 @@ function makeInvokeHandler(ctx) {
       }
 
       case 'sync_remote': return 'kategori 2, produk 4, member 2, user 2, push 0';
+      // Rekam argumen kirim/edit bon → harness bisa assert payload yang BENAR
+      // dikirim ke web (produk/harga/sesi/vmap), bukan cuma state internal.
+      case 'kirim_bon': {
+        ctx.sentBon = { ...a };
+        return 900 + (ctx.sentBonCount = (ctx.sentBonCount || 0) + 1);
+      }
+      case 'edit_bon': {
+        ctx.editedBon = { ...a };
+        return null;
+      }
       case 'tulis_log': return null;
       case 'buka_devtools': return null;
       case 'buka_url': {
@@ -343,8 +353,24 @@ async function scene_bon_grup(ctx) {
     lainItems = [{ nama: 'Jasa Rakit', harga: 5000, qty: 2 }];
     masukKeranjangLain();
     const lain = cart.filter(c => c.id < 0).map(c => ({ q: c.q, h: hargaIt(c), g: c.g }));
-    return { sesudahTarik, sesudahTambah, grup, hdr, saved, tarik: !!_tarikBon, lain };
+
+    // Simpan ULANG dgn item virtual di keranjang → payload nyata ke web harus
+    // membawa item virtual (produk + sesi + vmap). Dulu dibuang di webProduk/
+    // webSesi → produk_json/sesi_json cuma id>0 padahal `total` termasuk virtual.
+    const lainId = cart.find(c => c.id < 0)?.id;  // ambil SEBELUM simpanBon (cart dikosongkan)
+    simpanBon();
+    // Id virtual harus STABIL (hash nama+harga), bukan Date.now tiap panggilan.
+    const v1 = vidVirtual('Jasa Rakit', 5000), v2 = vidVirtual('Jasa Rakit', 5000);
+    const vBeda = vidVirtual('Jasa Rakit', 6000);
+    return { sesudahTarik, sesudahTambah, grup, hdr, saved, tarik: !!_tarikBon, lain,
+      lainId, stabil: v1 === v2 && v1 !== vBeda, v1 };
   });
+
+  // Payload nyata yg dikirim ke web (dari mock kirim_bon/edit_bon).
+  const payload = ctx.editedBon || ctx.sentBon;
+  const payloadProduk = payload ? JSON.parse(payload.produk) : {};
+  const payloadSesi = payload ? JSON.parse(payload.sesi) : [];
+  const payloadVmap = payload ? JSON.parse(payload.vmap) : {};
 
   // 1. Keranjang PISAH per grup sejak tarik (bug: dulu 1 baris gabungan 3 pcs).
   assert(hasil.sesudahTarik.filter(r => r.g === 1).length === 2
@@ -385,6 +411,25 @@ async function scene_bon_grup(ctx) {
     JSON.stringify(hasil.lain));
   assert(hasil.lain[0].q === 2 && hasil.lain[0].h === 5000,
     'item "Lainnya" bawa qty + harga sendiri', JSON.stringify(hasil.lain));
+
+  // 6. Item virtual IKUT ke server (produk + sesi + vmap). Dulu dibuang:
+  //    produk_json & sesi_json hanya berisi id>0, sedangkan `total` sudah
+  //    termasuk virtual → nota web selisih dgn total kasir.
+  const vidKey = String(hasil.lainId)
+  assert(payloadProduk[vidKey] === 2,
+    'payload web: produk ikutkan item virtual (qty 2)', JSON.stringify(payloadProduk));
+  const sesiVirtual = payloadSesi.flatMap(g => Object.keys(g.p)).filter(k => Number(k) < 0);
+  assert(sesiVirtual.includes(String(hasil.lainId)),
+    'payload web: sesi ikutkan item virtual', JSON.stringify(payloadSesi));
+  assert(payloadVmap?.[String(hasil.lainId)]?.nama === 'Jasa Rakit'
+      && payloadVmap?.[String(hasil.lainId)]?.harga === 5000,
+    'payload web: vmap bawa nama + harga item virtual', JSON.stringify(payloadVmap));
+
+  // 7. Id virtual STABIL: sama utk nama+harga sama, beda kalau harga beda.
+  //    (Dulu Date.now()+rand → id berubah tiap panggilan, tak bisa dirujuk server.)
+  assert(hasil.stabil && hasil.v1 === hasil.lainId,
+    'id virtual stabil = hash(nama+harga), bukan acak per panggilan',
+    JSON.stringify({ stabil: hasil.stabil, v1: hasil.v1, lainId: hasil.lainId }));
 
   await shot(page, '06-bon-grup');
   await p.close();
