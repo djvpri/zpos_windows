@@ -37,7 +37,7 @@ pub struct RemoteKategori {
     pub nama: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub struct RemoteItemVirtual {
     pub id: i64,
     pub nama: String,

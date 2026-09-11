@@ -231,7 +231,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url.clone(), token);
 
-    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize, usize), String> {
+    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize, usize, usize), String> {
         // `/api/auth/me` pertama: validasi token + dapat nama toko. Nama toko ini
         // dipakai deteksi GANTI TENANT — kalau beda dari sync sebelumnya, bersihkan
         // cache katalog/member lokal (produk/kategori upsert tak pernah hapus baris
