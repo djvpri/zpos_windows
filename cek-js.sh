@@ -7,14 +7,33 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-JS="$(mktemp "$(pwd)/.cek-js-XXXXXX.js")"
-CFG="$(mktemp "$(pwd)/.cek-js-cfg-XXXXXX.mjs")"
+# TEMP RELATIF — path absolut MSYS (/c/...) tak dipahami python/eslint native
+# Windows saat MSYS2_ARG_CONV_EXCL diset (konversi path dimatikan). Nama relatif
+# aman utk semuanya krn kita sudah `cd` ke root repo.
+JS=".cek-js-$$.js"
+CFG=".cek-js-cfg-$$.mjs"
 trap 'rm -f "$JS" "$CFG"' EXIT
 
 python3 - "$JS" <<'PY'
 import re, sys
-src = open("src/index.html").read()
-blocks = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", src, re.S)
+src = open("src/index.html", encoding="utf-8").read()
+# Ambil isi <script> TANPA src. Catat: '<script>' bisa muncul di KOMENTAR JS
+# (mis. "...WebView2 cache menyuntik dua <script>...") — regex naif berhenti di
+# situ & meninggalkan sisa JS di luar blok, sehingga tak pernah di-lint.
+# Jadi: scan berurutan, pasangkan tag yg BENAR (<script...> ... </script>).
+blocks, i = [], 0
+while True:
+    m = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>", re.I).search(src, i)
+    if not m:
+        break
+    end = src.find("</script>", m.end())
+    if end < 0:
+        break
+    body = src[m.end():end]
+    # blok nyata selalu punya JS sungguhan; tag hantu di komentar tak diikuti </script> jauh
+    if body.strip():
+        blocks.append(body)
+    i = end + len("</script>")
 open(sys.argv[1], "w").write("\n;\n".join(blocks))
 print(f"script blocks: {len(blocks)}")
 PY
