@@ -206,8 +206,15 @@ async function scene_login(ctx) {
   await page.click('#grid .card:has-text("Nasi Goreng")');
   await page.click('#grid .card:has-text("Nasi Goreng")');
   const total = (await page.locator('#total').textContent()).trim();
-  // Nasi Goreng 15000*2=30000; diskon 9% = 2700 → total 27000
-  assert(total.includes('Rp27.000'), 'total keranjang terhitung benar (27000)', 'total=' + total);
+  const sub = (await page.locator('#sub').textContent()).trim();
+  // Nasi Goreng 15000*2 = 30.000. Tak ada diskon di scene ini → total == subtotal.
+  assert(sub.includes('Rp30.000'), 'subtotal keranjang = 2 x 15.000', 'sub=' + sub);
+  assert(total.includes('Rp30.000'), 'total = subtotal saat diskon 0', 'total=' + total);
+  // Diskon manual N rupiah → total berkurang persis N (kontrak diskon tetap hidup).
+  await page.fill('#dsc', '3000');
+  await page.evaluate(() => setDiskonManual(3000));
+  const totalDisc = (await page.locator('#total').textContent()).trim();
+  assert(totalDisc.includes('Rp27.000'), 'diskon 3.000 → total 27.000', 'total=' + totalDisc);
   await shot(page, '02-cart-2xgoreng');
 
   await p.close();
@@ -287,6 +294,88 @@ async function scene_update(ctx) {
   await p.close();
 }
 
+// --- scene: bon gantung multi-grup — keranjang cermin nota, urutan STABIL ---
+// Bug yg dijaga: item beda grup dulu digabung 1 baris (cart.find by id saja) dan
+// grup direalokasi rebuildSess tiap simpan → susunan grup bergeser-geser. Sekarang
+// baris cart bawa `c.g`; grup lahir saat barang masuk & tak pernah direalokasi.
+async function scene_bon_grup(ctx) {
+  const { browser } = ctx;
+  const p = await browser.newContext({ viewport: { width: 1100, height: 780 } });
+  const page = await p.newPage();
+  await inject(page, ctx.handler);
+  await page.goto(OPTS.indexUrl);
+  await page.waitForFunction(() => window.__zposInvoke !== undefined);
+  await page.waitForSelector('#loginModal.show', { timeout: 8000 });
+  await page.selectOption('#loginUser', '1');
+  await page.fill('#loginPin', '123456');
+  await page.click('#loginBtn');
+  await page.waitForFunction(() => !document.getElementById('loginModal').classList.contains('show'), { timeout: 8000 });
+
+  // Bon tiruan: 2 grup, produk #1 di DUA grup dgn harga BEDA (kasus bon #103).
+  const hasil = await page.evaluate(() => {
+    const b = { nama: 'Umum', no: 1, subtotal: 0, diskon: 0, total: 0, vmap: {},
+      items: [
+        { id: 1, q: 1, h: 21000 },
+        { id: 1, q: 2, h: 21000 },   // grup 1 lanjutan
+        { id: 1, q: 3, h: 15000 },   // grup 2, harga beda
+      ],
+      sess: [
+        { ts: 1700000000000, items: [{ id: 1, q: 1, h: 21000 }, { id: 1, q: 2, h: 21000 }] },
+        { ts: 1700000100000, items: [{ id: 1, q: 3, h: 15000 }] },
+      ] };
+    bon.push(b);
+    tarikBon(bon.length - 1);
+    // Baris cart harus 2 (satu per grup), bukan 1 — inilah bug yg diperbaiki.
+    const sesudahTarik = cart.map(c => ({ id: c.id, q: c.q, h: c.h, g: c.g }));
+    // Tambah 1 pcs lagi → harus masuk grup BARU (3), tak menyerap ke grup 1/2.
+    add(1);
+    const sesudahTambah = cart.map(c => ({ id: c.id, q: c.q, h: c.h, g: c.g }));
+    // Jumlah grup di keranjang + header yg tampil.
+    const grup = [...new Set(cart.map(c => c.g))].sort((a, b2) => a - b2);
+    const hdr = [...document.querySelectorAll('.grup-hdr')].map(e => e.textContent.trim());
+    // Simpan ulang → grup bon harus tetap 3 dgn komposisi sama (tak realokasi).
+    simpanBon();
+    const saved = bon[bon.length - 1].sess.map(g => g.items.map(it => ({ id: it.id, q: it.q, h: it.h })));
+    return { sesudahTarik, sesudahTambah, grup, hdr, saved, tarik: !!_tarikBon };
+  });
+
+  // 1. Keranjang PISAH per grup sejak tarik (bug: dulu 1 baris gabungan 3 pcs).
+  assert(hasil.sesudahTarik.filter(r => r.g === 1).length === 2
+      && hasil.sesudahTarik.filter(r => r.g === 2).length === 1,
+    'tarik bon → baris cart terpisah per grup (grup 1 x2 baris, grup 2 x1)',
+    JSON.stringify(hasil.sesudahTarik));
+  assert(hasil.sesudahTarik.every(r => r.g === 1 || r.g === 2), 'grup asal dipertahankan',
+    JSON.stringify(hasil.sesudahTarik));
+  assert(hasil.sesudahTarik.filter(r => r.g === 2)[0].h === 15000
+      && hasil.sesudahTarik.filter(r => r.g === 1).every(r => r.h === 21000),
+    'harga per-grup tetap (grup1 21.000 vs grup2 15.000)', JSON.stringify(hasil.sesudahTarik));
+
+  // 2. Barang baru → grup BARU, tak menyerap ke grup lama.
+  assert(hasil.sesudahTambah.filter(r => r.g === 3).length === 1,
+    'tambah barang → baris di grup 3 (bukan gabung ke grup 1)',
+    JSON.stringify(hasil.sesudahTambah));
+  assert(hasil.sesudahTambah.filter(r => r.g === 1).length === 2,
+    'grup 1 tak bertambah baris setelah add()', JSON.stringify(hasil.sesudahTambah));
+
+  // 3. Header grup tampil di keranjang (>1 grup).
+  assert(hasil.grup.join(',') === '1,2,3', 'grup keranjang = 1,2,3',
+    JSON.stringify(hasil.grup));
+  assert(hasil.hdr.length >= 2, 'header grup tampil di keranjang', JSON.stringify(hasil.hdr));
+
+  // 4. Simpan ulang TIDAK menggeser grup (inti keluhan "berubah-ubah").
+  //    Grup 3 dapat harga KATALOG saat add (bukan 21.000 grup 1) — itu benar:
+  //    barang baru = harga hari ini, barang grup lama tetap harga terkunci.
+  const groupsOf = (rows) => rows.map(r => r.map(i => `${i.id}x${i.q}@${i.h}`).join('+')).join('|');
+  assert(groupsOf(hasil.saved).startsWith('1x1@21000+1x2@21000|1x3@15000|'),
+    'sesi bon stabil setelah simpan ulang (grup lama tak direalokasi)',
+    groupsOf(hasil.saved));
+  assert(hasil.saved[0].every(i => i.h === 21000) && hasil.saved[1].every(i => i.h === 15000),
+    'harga grup lama tak berubah setelah simpan ulang', groupsOf(hasil.saved));
+
+  await shot(page, '06-bon-grup');
+  await p.close();
+}
+
 // --- scene: pin salah → error message (kontrak login gagal) ---
 async function scene_login_fail(ctx) {
   const { browser } = ctx;
@@ -338,6 +427,7 @@ const sc = {
   login: scene_login,
   member: scene_member,
   update: scene_update,
+  bon_grup: scene_bon_grup,
   login_fail: scene_login_fail,
   schema: scene_schema,
 };
