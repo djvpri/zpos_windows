@@ -245,7 +245,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
         // (malah memastikan cache yg uda tercampur antar-tenant ikut dibersihkan).
         if last != toko {
             submit_log(&app, &format!("sync GANTI TENANT '{last}' -> '{toko}': bersihkan cache katalog/member"));
-            for tbl in ["produk", "kategori", "member", "harga_member"] {
+            for tbl in ["produk", "kategori", "member", "harga_member", "item_virtual"] {
                 conn.execute(&format!("DELETE FROM {tbl}"), []).map_err(|e| e.to_string())?;
             }
         }
@@ -277,15 +277,24 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
                 0
             }
         };
+        // pull_item_virtual best-effort: katalog "Lainnya" yang dibagi antar kasir
+        // satu toko. Gagal tidak merusak sync — kasir tetap bisa ketik manual.
+        let n_iv = match c.pull_item_virtual(conn) {
+            Ok(n) => n,
+            Err(e) => {
+                submit_log(&app, &format!("sync pull_item_virtual SKIP: {e}"));
+                0
+            }
+        };
         let n_push = c.push_antrian(conn)?;
-        Ok((n_kat, n_produk, n_km, n_member, n_user, n_bon, n_push))
+        Ok((n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv, n_push))
     })();
     match &r {
-        Ok((kk, pp, km, m, u, b, s)) => submit_log(&app, &format!("sync OK kategori={kk} produk={pp} katmember={km} member={m} user={u} bon={b} push={s}")),
+        Ok((kk, pp, km, m, u, b, iv, s)) => submit_log(&app, &format!("sync OK kategori={kk} produk={pp} katmember={km} member={m} user={u} bon={b} itemvirtual={iv} push={s}")),
         Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
     }
-    let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_push) = r?;
-    Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, push {n_push}"))
+    let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv, n_push) = r?;
+    Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, item-virtual {n_iv}, push {n_push}"))
 }
 
 // Push antrian offline saja (tanpa tarik katalog/users). Dipakai siklus
@@ -378,6 +387,61 @@ fn list_kategori_member(state: State<AppState>) -> Result<Vec<sync::RemoteKatego
         id: r.get(0)?, nama: r.get(1)?, diskon_persen: r.get(2)?,
     })).map_err(|e| e.to_string())?;
     rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
+}
+
+// ===== Katalog item virtual ("Lainnya") yang dibagi antar kasir satu toko =====
+// Baca dari cache sqlite lokal (diisi `pull_item_virtual` saat sync) → offline
+// tetap tampil, dan cepat (tak hit server tiap dialog dibuka). Server truth
+// tetap lewat pull tiap siklus sync.
+
+/// Daftar item virtual katalog (offline-ready, dari cache lokal).
+#[tauri::command]
+fn list_item_virtual(state: State<AppState>) -> Result<Vec<sync::RemoteItemVirtual>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut st = conn.prepare("SELECT id,nama,harga FROM item_virtual ORDER BY nama")
+        .map_err(|e| e.to_string())?;
+    let rows = st.query_map([], |r| Ok(sync::RemoteItemVirtual{
+        id: r.get(0)?, nama: r.get(1)?, harga: r.get(2)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<_,_>>().map_err(|e| e.to_string())
+}
+
+/// Tambah item virtual ke katalog toko (dibagikan ke semua kasir saat sync).
+/// Butuh online — katalog adalah sumber bersama, bukan state lokal.
+#[tauri::command]
+fn tambah_item_virtual(state: State<AppState>, app: tauri::AppHandle, base_url: String, nama: String, harga: i64) -> Result<i64, String> {
+    let nama = nama.trim().to_string();
+    if nama.is_empty() { return Err("Nama item wajib diisi".into()); }
+    if harga < 0 { return Err("Harga tidak valid".into()); }
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.tambah_item_virtual(conn, &nama, harga);
+    match &r {
+        Ok(id) => submit_log(&app, &format!("item_virtual tambah OK id={id} nama={nama} harga={harga}")),
+        Err(e) => submit_log(&app, &format!("item_virtual tambah GAGAL: {e}")),
+    }
+    r
+}
+
+/// Hapus (nonaktifkan) item virtual dari katalog toko. Butuh online.
+#[tauri::command]
+fn hapus_item_virtual(state: State<AppState>, app: tauri::AppHandle, base_url: String, id: i64) -> Result<(), String> {
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    let meta_tok: String = conn.query_row(
+        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+    ).unwrap_or_default();
+    let c = sync::SyncClient::new(base_url, meta_tok);
+    let r = c.hapus_item_virtual(conn, id);
+    match &r {
+        Ok(()) => submit_log(&app, &format!("item_virtual hapus OK id={id}")),
+        Err(e) => submit_log(&app, &format!("item_virtual hapus GAGAL: {e}")),
+    }
+    r
 }
 
 // Info lisensi toko yg di-cache saat sync (`meta.lisensi`, diisi pull_license).
@@ -1268,6 +1332,7 @@ fn run() {
             antri_transaksi, jumlah_antrian, sync_remote, push_antrian_only, jual_digital, buka_devtools,
             list_users, login_pin,
             setup_kasir, tambah_member, list_kategori_member,
+            list_item_virtual, tambah_item_virtual, hapus_item_virtual,
             versi_app,
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,

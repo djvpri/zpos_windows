@@ -81,6 +81,15 @@ pub fn init(conn: &Connection) -> Result<()> {
             k TEXT PRIMARY KEY,
             v TEXT
         );
+
+        -- Katalog item virtual ("Lainnya") yang DIBAGI antar kasir satu toko.
+        -- Di-pull dari server tiap sync; tambah/hapus dari desktop langsung
+        -- dikirim ke server. Id = id server (positif), stabil lintas device.
+        CREATE TABLE IF NOT EXISTS item_virtual (
+            id   INTEGER PRIMARY KEY,
+            nama TEXT NOT NULL,
+            harga INTEGER NOT NULL
+        );
         "#,
     )?;
 

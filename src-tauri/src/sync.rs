@@ -38,6 +38,13 @@ pub struct RemoteKategori {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RemoteItemVirtual {
+    pub id: i64,
+    pub nama: String,
+    pub harga: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RemoteMember {
     pub id: i64,
     pub nama: String,
@@ -306,6 +313,67 @@ impl SyncClient {
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(list.len())
+    }
+
+    // Katalog item virtual ("Lainnya") dari server → ganti ISI tabel lokal.
+    //
+    // GANTI, bukan upsert: server hanya mengirim yang AKTIF, jadi item yang
+    // dihapus/dinonaktifkan kasir lain harus benar-benar hilang dari dialog
+    // "Lainnya". Bon lama tak terpengaruh — nama+harga item sudah tersimpan di
+    // vmap bon masing-masing.
+    pub fn pull_item_virtual(&self, conn: &mut Connection) -> Result<usize, String> {
+        let resp = self.http.get(self.endpoint("/api/item-virtual"))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let list: Vec<RemoteItemVirtual> = resp.json().map_err(|e| format!("json@item_virtual: {e}"))?;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            tx.execute("DELETE FROM item_virtual", []).map_err(|e| e.to_string())?;
+            let mut st = tx.prepare_cached(
+                "INSERT INTO item_virtual (id,nama,harga) VALUES (?1,?2,?3)",
+            ).map_err(|e| e.to_string())?;
+            for it in &list {
+                st.execute((it.id, &it.nama, it.harga)).map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(list.len())
+    }
+
+    // Tambah item virtual ke katalog server → tulis juga ke cache lokal supaya
+    // langsung tampil tanpa menunggu siklus sync berikutnya.
+    //
+    // Nama sama & sudah ada (aktif atau tidak) → server menghidupkannya lagi
+    // sambil memperbarui harga (HTTP 200); nama baru → 201. Dua-duanya sukses.
+    pub fn tambah_item_virtual(&self, conn: &mut Connection, nama: &str, harga: i64) -> Result<i64, String> {
+        let body = serde_json::json!({ "nama": nama, "harga": harga });
+        let resp = self.http.post(self.endpoint("/api/item-virtual"))
+            .header("Cookie", self.auth_cookie())
+            .json(&body)
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let it: RemoteItemVirtual = resp.json().map_err(|e| format!("json: {e}"))?;
+        conn.execute(
+            "INSERT INTO item_virtual (id,nama,harga) VALUES (?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET nama=excluded.nama, harga=excluded.harga",
+            rusqlite::params![it.id, &it.nama, it.harga],
+        ).map_err(|e| e.to_string())?;
+        Ok(it.id)
+    }
+
+    // Nonaktifkan item virtual (server tak menghapus barisnya — bon lama masih
+    // me-resolve nama lewat vmap). Cache lokal dihapus supaya langsung hilang
+    // dari dialog "Lainnya"; sync berikutnya menguatkan keadaan yang sama.
+    pub fn hapus_item_virtual(&self, conn: &mut Connection, id: i64) -> Result<(), String> {
+        let resp = self.http.delete(self.endpoint(&format!("/api/item-virtual/{id}")))
+            .header("Cookie", self.auth_cookie())
+            .send().map_err(|e| format!("network: {e}"))?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        conn.execute("DELETE FROM item_virtual WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     // Member + kategori member dari server → upsert.

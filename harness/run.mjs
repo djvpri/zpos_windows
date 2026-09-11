@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 
-import { createDb, qListProduk, qListMember, qListKategoriMember, qListUsers } from './fixtures/db.mjs';
+import { createDb, qListProduk, qListMember, qListKategoriMember, qListItemVirtual, qListUsers } from './fixtures/db.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const INDEX = join(ROOT, '..', 'src', 'index.html');
@@ -48,6 +48,21 @@ function makeInvokeHandler(ctx) {
       case 'list_produk':  return qListProduk(db);
       case 'list_member':  return qListMember(db);
       case 'list_kategori_member': return qListKategoriMember(db);
+      case 'list_item_virtual': return qListItemVirtual(db);
+      // Kontrak alur JS: kasir tambah preset → item langsung tercatat (nama
+      // di-trim, harga dibulatkan) supaya assertion bisa cek isi katalog.
+      case 'tambah_item_virtual': {
+        const nama = String(a.nama ?? '').trim();
+        if (!nama) fail('Nama item wajib diisi');
+        const harga = Number(a.harga);
+        if (!Number.isFinite(harga) || harga < 0) fail('Harga tidak valid');
+        const row = db.prepare('INSERT INTO item_virtual (nama,harga) VALUES (?,?)').run(nama, Math.round(harga));
+        return Number(row.lastInsertRowid);
+      }
+      case 'hapus_item_virtual': {
+        db.prepare('DELETE FROM item_virtual WHERE id=?').run(a.id);
+        return null;
+      }
       case 'list_users':   return qListUsers(db);
       case 'jumlah_antrian': {
         const r = db.prepare('SELECT COUNT(*) n FROM antrian').get();
@@ -436,6 +451,93 @@ async function scene_bon_grup(ctx) {
 }
 
 // --- scene: pin salah → error message (kontrak login gagal) ---
+// Katalog item virtual ("Lainnya") yang DIBAGI antar kasir satu toko.
+// Kontrak: daftar dibaca dari SQLite lokal (bukan localStorage) → kasir B
+// melihat preset yang dibuat kasir A; tambah/hapus langsung ke server.
+async function scene_item_virtual(ctx) {
+  const { browser } = ctx;
+  const p = await browser.newContext({ viewport: { width: 1100, height: 780 } });
+  const page = await p.newPage();
+  await inject(page, ctx.handler);
+  await page.goto(OPTS.indexUrl);
+  await page.waitForFunction(() => window.__zposInvoke !== undefined);
+  await page.waitForSelector('#loginModal.show', { timeout: 8000 });
+  await page.selectOption('#loginUser', '1');
+  await page.fill('#loginPin', '123456');
+  await page.click('#loginBtn');
+  await page.waitForFunction(() => !document.getElementById('loginModal').classList.contains('show'), { timeout: 8000 });
+
+  // Preset dari "kasir lain" (ada di cache lokal/DB) harus muncul di dialog.
+  ctx.db.prepare('DELETE FROM item_virtual').run();
+  ctx.db.prepare('INSERT INTO item_virtual (id,nama,harga) VALUES (1,?,?),(2,?,?)')
+    .run('Ayam Geprek', 20000, 'Parkir', 5000);
+
+  // Buka dialog "Lainnya" → PRESET_LAIN harus terisi dari list_item_virtual.
+  await page.evaluate(() => bukaLain());
+  await page.waitForFunction(() => PRESET_LAIN.length === 2, { timeout: 8000 });
+  const dariServer = await page.evaluate(() => PRESET_LAIN.map(p => ({ id: p.id, nama: p.nama, harga: p.harga })));
+  const tombol = await page.evaluate(() => document.querySelectorAll('#presetWrap button').length);
+
+  // Tak ada console.error dari jalur ini.
+  assert(dariServer.length === 2, 'katalog toko dimuat dari cache lokal (2 item)', JSON.stringify(dariServer));
+  assert(dariServer.some(p => p.nama === 'Ayam Geprek' && p.harga === 20000),
+    'preset kasir lain terlihat kasir ini (Ayam Geprek 20.000)', JSON.stringify(dariServer));
+  assert(dariServer.every(p => typeof p.id === 'number' && p.id > 0),
+    'id katalog berupa angka positif (bukan id negatif virtual dadakan)', JSON.stringify(dariServer));
+  assert(tombol === 2, 'tombol preset dirender sejumlah isi katalog', String(tombol));
+
+  // Klik preset → item masuk keranjang dgn harga preset.
+  const masuk = await page.evaluate(() => {
+    lainItems = [];
+    terapkanLain('Ayam Geprek', 20000);   // isi daftar modal
+    masukKeranjangLain();                  // pindah ke keranjang (alur tombol "Masukkan")
+    return cart.map(c => ({ id: c.id, nama: (virtualProduk[c.id] || {}).nama, h: hargaIt(c), q: c.q }))
+      .filter(r => r.nama === 'Ayam Geprek');
+  });
+  assert(masuk.length === 1 && masuk[0].h === 20000 && masuk[0].q === 1,
+    'klik preset → masuk keranjang dgn harga preset', JSON.stringify(masuk));
+
+  // Kasir UBAH harga di keranjang → harga bon ikut berubah (katalog tak dikunci).
+  const ubah = await page.evaluate(() => {
+    const c = cart.find(x => (virtualProduk[x.id] || {}).nama === 'Ayam Geprek');
+    c.h = 18000;  // harga per-baris bon; katalog TIDAK ikut berubah
+    return cart.filter(x => (virtualProduk[x.id] || {}).nama === 'Ayam Geprek')
+      .map(x => ({ h: hargaIt(x), q: x.q, katalog: PRESET_LAIN.find(p => p.nama === 'Ayam Geprek').harga }));
+  });
+  assert(ubah.length === 1 && ubah[0].h === 18000,
+    'harga item katalog bisa diubah per-bon (tidak terkunci)', JSON.stringify(ubah));
+  assert(ubah[0].katalog === 20000,
+    'ubah harga per-bon TIDAK mengubah katalog toko (tetap 20.000)', JSON.stringify(ubah));
+
+  // Tambah preset baru → tersimpan (mock server) & langsung tampil.
+  const sebelum = ctx.db.prepare('SELECT COUNT(*) n FROM item_virtual').get().n;
+  // masukKeranjangLain() menutup modal → buka lagi, lalu tampilkan panel kelola.
+  await page.evaluate(() => { bukaLain(); kelolaPresetToggle(); });
+  await page.waitForSelector('#ppNama', { state: 'visible', timeout: 8000 });
+  await page.fill('#ppNama', '  Laminating A4  ');
+  await page.fill('#ppHarga', '7000');
+  await page.click('#ppAddBtn');
+  await page.waitForFunction(() => PRESET_LAIN.some(p => p.nama === 'Laminating A4'), { timeout: 8000 });
+  const sesudah = ctx.db.prepare('SELECT COUNT(*) n FROM item_virtual').get().n;
+  const tersimpan = ctx.db.prepare('SELECT nama,harga FROM item_virtual WHERE nama=?').get('Laminating A4');
+  assert(sesudah === sebelum + 1, 'tambah preset → tersimpan di katalog toko (bukan localStorage)', `${sebelum} -> ${sesudah}`);
+  assert(tersimpan && tersimpan.nama === 'Laminating A4' && tersimpan.harga === 7000,
+    'nama di-trim & harga utuh saat disimpan', JSON.stringify(tersimpan));
+  const sisaLS = await page.evaluate(() => localStorage.getItem('zpos_preset_lain'));
+  assert(!sisaLS,
+    'localStorage preset lama TIDAK dipakai lagi (katalog server sumbernya)', String(sisaLS));
+
+  // Hapus preset → hilang dari katalog lokal.
+  const idHapus = tersimpan ? ctx.db.prepare('SELECT id FROM item_virtual WHERE nama=?').get('Laminating A4').id : null;
+  await page.evaluate((id) => hapusPresetLain(PRESET_LAIN.findIndex(p => p.id === id)), idHapus);
+  await page.waitForFunction(() => !PRESET_LAIN.some(p => p.nama === 'Laminating A4'), { timeout: 8000 });
+  const sisa = ctx.db.prepare('SELECT COUNT(*) n FROM item_virtual WHERE nama=?').get('Laminating A4').n;
+  assert(sisa === 0, 'hapus preset → hilang dari katalog semua kasir', String(sisa));
+
+  await page.screenshot({ path: join(SHOTS, 'item_virtual.png'), fullPage: false });
+  await p.close();
+}
+
 async function scene_login_fail(ctx) {
   const { browser } = ctx;
   const p = await browser.newContext({ viewport: { width: 1100, height: 780 } });
@@ -487,6 +589,7 @@ const sc = {
   member: scene_member,
   update: scene_update,
   bon_grup: scene_bon_grup,
+  item_virtual: scene_item_virtual,
   login_fail: scene_login_fail,
   schema: scene_schema,
 };

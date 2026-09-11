@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS meta (
     k TEXT PRIMARY KEY,
     v TEXT
 );
+CREATE TABLE IF NOT EXISTS item_virtual (
+    id    INTEGER PRIMARY KEY,
+    nama  TEXT NOT NULL,
+    harga INTEGER NOT NULL
+);
 `;
 
 // bcrypt hash untuk PIN "123456" (login_pin pakai bcrypt::verify di Rust). Hash real.
@@ -145,6 +150,13 @@ export function qListKategoriMember(db) {
     .map(r => ({ id: r.id, nama: r.nama, diskon_persen: r.diskon_persen }));
 }
 
+// Katalog item virtual ("Lainnya") yang dibagi antar kasir — dari cache lokal,
+// sama seperti app asli (diisi pull_item_virtual saat sync).
+export function qListItemVirtual(db) {
+  return db.prepare(`SELECT id,nama,harga FROM item_virtual ORDER BY nama`).all()
+    .map(r => ({ id: r.id, nama: r.nama, harga: r.harga }));
+}
+
 export function qListUsers(db) {
   return db.prepare(`SELECT id, nama, email, role, aktif FROM users_lokal WHERE aktif=1 ORDER BY nama`).all()
     .map(r => ({ id: r.id, nama: r.nama, email: r.email, role: r.role, aktif: !!r.aktif }));
@@ -165,4 +177,4 @@ export function createDbFile() {
   return path;
 }
 
-export default { createDb, createDbFile, qListProduk, qListMember, qListKategoriMember, qListUsers, SKEMA, PIN_BCRYPT };
+export default { createDb, createDbFile, qListProduk, qListMember, qListKategoriMember, qListItemVirtual, qListUsers, SKEMA, PIN_BCRYPT };

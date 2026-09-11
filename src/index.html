@@ -513,7 +513,7 @@
         <div style="display:flex;gap:6px">
           <input id="ppNama" placeholder="Nama preset..." style="flex:2;padding:7px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none" />
           <input id="ppHarga" placeholder="Harga (0=bebas)" inputmode="numeric" style="flex:1;padding:7px 9px;border:1.5px solid #e2e6ee;border-radius:8px;font-size:12px;outline:none" />
-          <button onclick="tambahPresetLain()" style="padding:0 12px;background:#4f7cff;color:#fff;border:none;border-radius:8px;cursor:pointer"><i class="bi bi-plus"></i></button>
+          <button id="ppAddBtn" onclick="tambahPresetLain()" title="Tambah preset ke katalog toko" style="padding:0 12px;background:#4f7cff;color:#fff;border:none;border-radius:8px;cursor:pointer"><i class="bi bi-plus"></i></button>
         </div>
       </div>
 
@@ -613,13 +613,12 @@
   let virtualProduk = {};    // {id(negatif): {nama,harga}}
   let lainItems = [];        // [{id,nama,harga,qty}] sementara di modal
   let kelolaLain = false;    // tampilkan panel kelola preset di modal
-  const LS_LAIN = 'zpos_preset_lain';
-  let PRESET_LAIN = [
-    { id:'p1', nama:'Jasa Servis', harga:0 },{ id:'p2', nama:'Fotokopi', harga:500 },
-    { id:'p3', nama:'Print Hitam', harga:1000 },{ id:'p4', nama:'Print Warna', harga:2500 },
-    { id:'p5', nama:'Laminating', harga:5000 },{ id:'p6', nama:'Jilid', harga:5000 },
-  ];
-  try { const _s = localStorage.getItem(LS_LAIN); if(_s) PRESET_LAIN = JSON.parse(_s); } catch(e){}
+  // Preset "Lainnya" = KATALOG TOKO, dibagi antar kasir (server). Dimuat lewat
+  // `tinv('list_item_virtual')` saat modal dibuka; tambah/hapus langsung dikirim
+  // ke server supaya kasir lain ikut melihatnya. Dulu localStorage (per-device)
+  // → kasir B tak pernah melihat preset kasir A.
+  let PRESET_LAIN = [];
+  let lainErr = '';          // pesan gagal simpan/hapus (tampil di panel kelola)
   let offline = true;        // status koneksi offline (kasir utama = offline-first)
   let offQtn = 0;            // jumlah antrian transaksi offline
   let bon = [];              // bon gantung {nama, items, total, vmap, bonId}
@@ -950,17 +949,33 @@
     const v=virtualProduk[id]; if(!v) return null;
     return { n:v.nama, p:v.harga, s:9999 }; // bentuk sama dgn PRODUK (n= nama, p= harga, s= stok)
   }
-  function bukaLain(){ document.getElementById('nlModal').classList.add('show'); renderPresetLain(); renderLainItems(); }
+  function bukaLain(){ document.getElementById('nlModal').classList.add('show'); renderPresetLain(); renderLainItems(); muatPresetLain(); }
   function tutupLain(){ document.getElementById('nlModal').classList.remove('show'); }
-  function simpanPresetLain(){ try{ localStorage.setItem(LS_LAIN, JSON.stringify(PRESET_LAIN)); }catch(e){} }
+  // Ambil katalog toko dari cache lokal (diisi sync). Offline → tetap tampil
+  // versi cache terakhir; kalau app bukan Tauri (dev browser) → biarkan kosong.
+  function muatPresetLain(){
+    if(!zposIsTauri()) return;
+
+    tinv('list_item_virtual').then(function(rows){
+      PRESET_LAIN = (rows||[]).map(function(r){ return {id:Number(r.id), nama:r.nama, harga:Number(r.harga)}; });
+      renderPresetLain();
+    }).catch(function(e){ lainErr='Gagal memuat katalog: '+e; renderPresetList(); });
+  }
   function renderPresetLain(){
-    document.getElementById('presetWrap').innerHTML = PRESET_LAIN.map(p=>
+    const wrap = document.getElementById('presetWrap');
+    if(!PRESET_LAIN.length){
+      wrap.innerHTML = '<span style="font-size:11px;color:#98a2b3">Belum ada preset. Tambah lewat Kelola Preset.</span>';
+      renderPresetList();
+      return;
+    }
+    wrap.innerHTML = PRESET_LAIN.map(p=>
       `<button onclick="terapkanLain('${p.nama.replace(/\\'/g,"\\\\'")}',${p.harga})" style="border:1.5px solid #e2e6ee;background:#fff;color:#465;font-size:12px;border-radius:999px;padding:5px 11px;cursor:pointer;transition:all .12s">${p.nama}${p.harga>0?' • Rp '+p.harga.toLocaleString('id-ID'):''}</button>`
     ).join('');
     renderPresetList();
   }
   function renderPresetList(){
-    document.getElementById('presetList').innerHTML = PRESET_LAIN.map((p,i)=>{
+    const err = lainErr ? `<div style="font-size:11px;color:#d64545;margin-bottom:6px">${lainErr}</div>` : '';
+    document.getElementById('presetList').innerHTML = err + PRESET_LAIN.map((p,i)=>{
       const f=p.harga>0?'Rp '+p.harga.toLocaleString('id-ID'):'Harga bebas';
       return `<div style="display:flex;align-items:center;gap:8px;border:1px solid #f0f2f7;border-radius:10px;padding:7px 10px">
         <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#233;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.nama}</div><div style="font-size:10px;color:#98a2b3">${f}</div></div>
@@ -969,15 +984,33 @@
     }).join('');
   }
   function kelolaPresetToggle(){ kelolaLain=!kelolaLain; document.getElementById('kelolaWrap').style.display=kelolaLain?'block':'none'; }
+  // Simpan preset ke katalog toko (server). Butuh online — katalog sumber
+  // bersama, jadi gagal simpan HARUS terlihat kasir (jangan diam-diam lokal).
   function tambahPresetLain(){
     const n=(document.getElementById('ppNama').value||'').trim();
     if(!n) return;
     const h=parseInt(document.getElementById('ppHarga').value||'0',10)||0;
-    PRESET_LAIN.push({id:'p'+Date.now(), nama:n, harga:h});
-    simpanPresetLain(); document.getElementById('ppNama').value=''; document.getElementById('ppHarga').value='';
-    renderPresetLain();
+    if(!zposIsTauri()){ lainErr='Simpan preset butuh koneksi ke server.'; renderPresetList(); return; }
+    lainErr='';
+    const base = localStorage.getItem('zpos_base');
+    if(!base){ lainErr='Belum di-setup. Isi Base URL dulu (Pengaturan).'; renderPresetList(); return; }
+    tinv('tambah_item_virtual',{baseUrl:base, nama:n, harga:h}).then(function(){
+      document.getElementById('ppNama').value=''; document.getElementById('ppHarga').value='';
+      muatPresetLain();
+    }).catch(function(e){ lainErr='Gagal menyimpan: '+e; renderPresetList(); });
   }
-  function hapusPresetLain(i){ PRESET_LAIN.splice(i,1); simpanPresetLain(); renderPresetLain(); }
+  function hapusPresetLain(i){
+    const p=PRESET_LAIN[i]; if(!p) return;
+    if(!zposIsTauri()){ lainErr='Hapus preset butuh koneksi ke server.'; renderPresetList(); return; }
+    lainErr='';
+    const base = localStorage.getItem('zpos_base');
+    if(!base){ lainErr='Belum di-setup. Isi Base URL dulu (Pengaturan).'; renderPresetList(); return; }
+    // Hapus pakai ID, bukan index: daftar bisa berubah urutan setelah muat ulang
+    // dan index lama menunjuk item yang salah.
+    tinv('hapus_item_virtual',{baseUrl:base, id:Number(p.id)}).then(function(){
+      muatPresetLain();
+    }).catch(function(e){ lainErr='Gagal menghapus: '+e; renderPresetList(); });
+  }
   // Tambah item ke daftar sementara modal & langsung tampil di keranjang.
   function terapkanLain(n,h){ tambahItemLain(n,Number(h)||0,1); renderLainItems(); }
   function tambahLainManual(){
