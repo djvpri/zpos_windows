@@ -336,7 +336,14 @@ async function scene_bon_grup(ctx) {
     // Simpan ulang → grup bon harus tetap 3 dgn komposisi sama (tak realokasi).
     simpanBon();
     const saved = bon[bon.length - 1].sess.map(g => g.items.map(it => ({ id: it.id, q: it.q, h: it.h })));
-    return { sesudahTarik, sesudahTambah, grup, hdr, saved, tarik: !!_tarikBon };
+    // Item "Lainnya" (id virtual) harus ikut grup AKTIF saat masuk, bukan selalu
+    // Grup 1. Setelah simpanBon(), _grupAktif balik 1 → naikkan ke 4 dulu supaya
+    // salah-kelompok ketahuan (kalau bug, g akan 1 bukan 4).
+    _grupAktif = 4;
+    lainItems = [{ nama: 'Jasa Rakit', harga: 5000, qty: 2 }];
+    masukKeranjangLain();
+    const lain = cart.filter(c => c.id < 0).map(c => ({ q: c.q, h: hargaIt(c), g: c.g }));
+    return { sesudahTarik, sesudahTambah, grup, hdr, saved, tarik: !!_tarikBon, lain };
   });
 
   // 1. Keranjang PISAH per grup sejak tarik (bug: dulu 1 baris gabungan 3 pcs).
@@ -371,6 +378,13 @@ async function scene_bon_grup(ctx) {
     groupsOf(hasil.saved));
   assert(hasil.saved[0].every(i => i.h === 21000) && hasil.saved[1].every(i => i.h === 15000),
     'harga grup lama tak berubah setelah simpan ulang', groupsOf(hasil.saved));
+
+  // 5. Item "Lainnya" masuk grup AKTIF (bug: dulu tanpa `g` → selalu Grup 1).
+  assert(hasil.lain.length === 1 && hasil.lain[0].g === 4,
+    'item "Lainnya" ikut grup aktif (4), bukan jatuh ke Grup 1',
+    JSON.stringify(hasil.lain));
+  assert(hasil.lain[0].q === 2 && hasil.lain[0].h === 5000,
+    'item "Lainnya" bawa qty + harga sendiri', JSON.stringify(hasil.lain));
 
   await shot(page, '06-bon-grup');
   await p.close();
