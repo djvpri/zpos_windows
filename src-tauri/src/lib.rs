@@ -136,6 +136,31 @@ fn jumlah_antrian(state: State<AppState>) -> Result<i64, String> {
     Ok(n)
 }
 
+/// Baris antrian pertama (paling tua) — DIPOTONG 400 char, cukup utk diagnosa
+/// transaksi nyangkut (qty/produk_id NaN penyebab HTTP 500). Tidak mengirim
+/// data penuh ke log supaya tetap aman & ringkas.
+#[tauri::command]
+fn baca_antrian_pertama(state: State<AppState>) -> Result<String, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT client_ref, produk FROM antrian ORDER BY id LIMIT 1",
+            [],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .ok();
+    let (no, payload) = match row {
+        Some(v) => v,
+        None => return Ok(String::new()),
+    };
+    let ringkas = if payload.chars().count() > 400 {
+        payload.chars().take(400).collect::<String>()
+    } else {
+        payload
+    };
+    Ok(format!("{} {}", no, ringkas))
+}
+
 // ---------- login PIN multiuser offline ----------
 #[derive(Serialize)]
 struct UserLokalRow {
@@ -955,7 +980,7 @@ fn export_log(app: tauri::AppHandle) -> Result<String, String> {
 // Tiap device kasir: saat file zpos-errors.log BERTAMBAH sejak kirim terakhir,
 // post delta baris (info+error) ke /api/kasir/log server web z1pos. Offline →
 // gagal network: pos TIDAK diupdate, delta di-retry submit berikutnya. Server
-// web menahan retensi 12 jam. Diregister sebagai command frontend `kirim_log_error`.
+// web menahan retensi 30 hari (+rotase 3000 baris/device). Diregister sebagai command frontend `kirim_log_error`.
 use std::hash::{Hash, Hasher};
 
 /// ID stabil per-install: hash konten app_data_dir + nama PC. Kalau belum ada
@@ -1329,7 +1354,7 @@ fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
-            antri_transaksi, jumlah_antrian, sync_remote, push_antrian_only, jual_digital, buka_devtools,
+            antri_transaksi, jumlah_antrian, baca_antrian_pertama, sync_remote, push_antrian_only, jual_digital, buka_devtools,
             list_users, login_pin,
             setup_kasir, tambah_member, list_kategori_member,
             list_item_virtual, tambah_item_virtual, hapus_item_virtual,

@@ -672,6 +672,47 @@
     try{ el.textContent = await tinv('baca_log',{tail:50}) || '(kosong)'; }
     catch(e){ el.textContent='(tak bisa baca log: '+(e&&e.message||e)+')'; }
   }
+
+  // ---------- diagnosa sync SPESIFIK (saat gagal) ----------
+  // Dilempar tiap sync GAGAL. Membedakan 4 kemungkinan penyebab dan menuliskan
+  // detail ke zpos-errors.log (yang sekaligus di-upload ke server):
+  //   1. tak bisa resolve/reach server (network mati / DNS / TLS)
+  //   2. auth ditolak (token jwt basi)
+  //   3. push transaksi ditolak server (status + body respons — akar 500 NaN)
+  //   4. selisih waktu / antrian lokal aneh
+  async function diagnosaSync(asal, e){
+    var m=(e&&e.message?e.message:String(e||'?'));
+    var baris='DIAG | asal='+asal+' | '+m;
+    const pb=(typeof localStorage!=='undefined'?localStorage.getItem('zpos_base'):'')||'';
+    var t0=Date.now();
+    try{
+      var pr=await fetch(pb, {method:'HEAD', cache:'no-store'});
+      baris+=' | probe '+pr.status+' '+(Date.now()-t0)+'ms';
+    }catch(pe){
+      // no-cors/opaque: status 0 tp request sampai → jaringan hidup
+      try{
+        var po=await fetch(pb, {method:'HEAD', cache:'no-store', mode:'no-cors'});
+        baris+=' | probe-opaque '+(Date.now()-t0)+'ms; er='+(pe&&pe.message?pe.message:'?');
+      }catch(pe2){
+        baris+=' | probe GAGAL:'+(pe&&pe.message?pe.message:String(pe));
+      }
+    }
+    // 2) antrian lokal — kalau transaksi nyangkut, tunjukkan baris pertamanya (dipotong)
+    try{
+      var qn=await tinv('jumlah_antrian');
+      baris+=' | antrian='+qn;
+      if(qn>0){
+        var isi=await tinv('baca_antrian_pertama');
+        if(isi) baris+=' | head=['+String(isi).slice(0,180)+']';
+      }
+    }catch(ae){ /* command tak ada di versi lama — diam */ }
+    // 3) token: panjang + 12 char ekor (utk korelasi dgn log server, tak bocorkan isi)
+    try{
+      var tok=localStorage.getItem('zpos_tok')||'';
+      baris+=' | tok_len='+tok.length;
+    }catch(_){}
+    logErr('DIAG', baris);
+  }
   // Export zpos-errors.log → file .txt di folder Downloads (via command Rust export_log).
   async function exportLog(){
     try{
@@ -2794,6 +2835,9 @@
       autoFailCount++;
       if(autoRetryMs<30000) autoRetryMs=30000;
       else if(autoRetryMs<60000) autoRetryMs=60000;
+      // Diagnosa spesifik: probe server + isi antrian + panjang token →
+      // zpos-errors.log (auto-upload ke /api/kasir/log begitu ada koneksi).
+      try{ diagnosaSync('autoSync', e); }catch(_){}
       // Flip status OFFLINE hanya setelah >=2 gagal beruntun — drop singkat
       // (WiFi hiccup) tak bikin badge berkedip offline↔online. Event `offline`
       // browser tetap flip instan (jaringan memang putus; lihat listener bawah).
