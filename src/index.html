@@ -1810,9 +1810,9 @@
   // print (mis. tauri-plugin-printer / esc-pos serial) — TODO saat printer termal dipakai.
   function desainKasir(){
     const id=TOKO_INFO.desain_nota||'klasik';
-    if(id==='modern') return { footerPowered:true, infoSebelumItems:false, totalPertama:true, dividerSolid:true, showKsr:false, showHargaSatuan:false };
-    if(id==='klasik2') return { footerPowered:false, infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:true };
-    return { footerPowered:false, infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:false }; // klasik
+    if(id==='modern') return { infoSebelumItems:false, totalPertama:true, dividerSolid:true, showKsr:false, showHargaSatuan:false };
+    if(id==='klasik2') return { infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:true };
+    return { infoSebelumItems:true, totalPertama:false, dividerSolid:false, showKsr:true, showHargaSatuan:false }; // klasik
   }
   function notaHtml(){
     const n=notaTerakhir; if(!n) return '';
@@ -1881,7 +1881,7 @@
       <div style="${div};margin:6px 0"></div>
       ${TOKO_INFO.catatan_struk?`<div style="text-align:center;color:#555;font-size:10px;margin-bottom:4px">${esc(TOKO_INFO.catatan_struk)}</div>`:''}
       <div style="text-align:center;margin-top:6px"><strong>*** TERIMA KASIH ***</strong></div>
-      ${d.footerPowered? '<div style="text-align:center;color:#999;font-size:10px;margin-top:2px">Powered by Z1 Pos</div>' : ''}
+      <div style="text-align:center;color:#999;font-size:10px;margin-top:2px">Powered by Z1 Pos</div>
     </div>`;
   }
   // ===== Cetak nota via ESC/POS ke printer thermal (Opsi A: spooler Windows) =====
@@ -1952,7 +1952,7 @@
     line(divider);
     if(TOKO_INFO.catatan_struk) wrapCenter(esc(TOKO_INFO.catatan_struk));
     center('*** TERIMA KASIH ***');
-    if(d.footerPowered){ B.push('\x1ba\x01Powered by Z1 Pos\n'); }
+    B.push('\x1ba\x01Powered by Z1 Pos\n');
     B.push('\x1ba\x00\n\n\n');
     B.push('\x1dV\x42'); // cut partial
     // Reset printer (ESC @) DI AKHIR job nota. Tanpa ini byte state/code-page dari
