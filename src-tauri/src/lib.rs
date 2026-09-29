@@ -23,6 +23,11 @@ pub struct AppState {
 struct ProdukRow { id: i64, nama: String, harga: i64, stok: i64, kategori_id: Option<i64>, barcode: Option<String>, barcode_internal: Option<String>, foto_url: Option<String>, k: Option<String>, jenis: String, buyer_sku_code: Option<String>, digital_brand: String }
 
 // ---------- commands ----------
+// Default kurangi_stok=true untuk Lisensi serial lama (sebelum field ini
+// ada di meta). Sync.rs pakai "stok_default_true", nama berbeda supaya
+// crate-level function tak bentrok.
+fn lisensi_stok_default_true() -> bool { true }
+
 #[tauri::command]
 fn list_produk(state: State<AppState>) -> Result<Vec<ProdukRow>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -491,6 +496,12 @@ struct Lisensi {
     expired: bool,
     #[serde(default)]
     langganan_sampai: Option<String>,
+    // Kebijakan stok dari Pengaturan web (disimpan Rust ke meta 'lisensi'
+    // saat sync). Default: perilaku historis (kurangi stok saat jual).
+    #[serde(default = "lisensi_stok_default_true")]
+    kurangi_stok: bool,
+    #[serde(default)]
+    jual_stok_habis: bool,
 }
 
 #[tauri::command]

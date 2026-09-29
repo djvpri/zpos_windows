@@ -68,6 +68,10 @@ fn de_f64_str<'de, D: serde::Deserializer<'de>>(de: D) -> Result<f64, D::Error> 
     }
 }
 
+// Aturan stok: server lama (atau endpoint gagal) tak mengirim `kurangi_stok`.
+// Default TRUE = perilaku historis kasir (stok lokal berkurang saat jual).
+fn stok_default_true() -> bool { true }
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct RemoteKategoriMember {
     pub id: i64,
@@ -505,6 +509,11 @@ impl SyncClient {
         let mut telepon = String::new();
         let mut catatan_struk = String::new();
         let mut desain_nota = String::new();
+        // Kebijakan stok — sumber kebenaran: toggle di Pengaturan web.
+        // Default kurangi_stok=true (perilaku lama) & jual_stok_habis=false
+        // kalau endpoint gagal / server belum kirim field ini.
+        let mut kurangi_stok = true;
+        let mut jual_stok_habis = false;
         {
             let pr = self.http.get(self.endpoint("/api/pengaturan"))
                 .header("Cookie", self.auth_cookie())
@@ -517,10 +526,13 @@ impl SyncClient {
                         #[serde(default)] telepon: String,
                         #[serde(default)] catatan_struk: String,
                         #[serde(default)] desain_nota: String,
+                        #[serde(default = "stok_default_true")] kurangi_stok: bool,
+                        #[serde(default)] jual_stok_habis: bool,
                     }
                     if let Ok(p) = pre.json::<Pr>() {
                         alamat = p.alamat; telepon = p.telepon; catatan_struk = p.catatan_struk;
                         desain_nota = p.desain_nota;
+                        kurangi_stok = p.kurangi_stok; jual_stok_habis = p.jual_stok_habis;
                     }
                 }
             }
@@ -530,6 +542,7 @@ impl SyncClient {
             "catatan_struk": catatan_struk, "desain_nota": desain_nota,
             "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
             "langganan_sampai": me.langganan_sampai,
+            "kurangi_stok": kurangi_stok, "jual_stok_habis": jual_stok_habis,
         }).to_string();
         conn.execute(
             "INSERT INTO meta (k,v) VALUES ('lisensi',?1)

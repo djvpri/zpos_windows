@@ -583,6 +583,9 @@
   let _cB = '';              // kata kunci cari bon (nama / nomor)
   let merchantHub = null; // {token, base_url, ...}
   let LISENSI = null;      // {expires_at_day, sisa, terlambat, blocked} hasil refLisensi()
+  // Kebijakan stok — sumber: Pengaturan web, sinkron Rust ke meta 'lisensi'.
+  // Default true (perilaku historis) sebelum sync pertama.
+  let KURANGI_STOK = true;
   // Info toko utk header nota (cached dr `ambil_lisensi`/sync): nama, alamat,
   // telepon, catatan_struk. Fallback ke teks statis bila belum sinkron.
   let TOKO_INFO = { nama:'Z1 Kasir', alamat:'', telepon:'', catatan_struk:'', desain_nota:'klasik' };
@@ -846,13 +849,14 @@
   function add(id){
     const p=PRODUK.find(p=>p.id===id); if(!p) return;
     const dig = p.jenis==='digital';
-    if(!dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+    // KURANGI_STOK=OFF (Pengaturan web): stok tak diurus kasir — jual bebas.
+    if(KURANGI_STOK && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
     // Grup baris = grup yg sedang AKTIF. Saat bon ditarik, barang baru masuk grup
     // BARU (tak menyerap ke grup lama) → susunan grup bon tak pernah bergeser.
     const g = _grupAktif;
     const f=cart.find(c=>c.id===id && c.g===g);
     const q=(f?f.q:0)+1;
-    if(!dig && q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    if(KURANGI_STOK && !dig && q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     if(f) f.q++; else cart.push({id,q:1,g});
     renderCart();
   }
@@ -965,7 +969,7 @@
     const c=cart[x];
     const p=pCart(c.id);
     const dig = p && p.jenis==='digital';
-    if(!dig && d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    if(KURANGI_STOK && !dig && d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
   }
   // Simpan nomor tujuan utk item digital di keranjang (customer_no per item).
@@ -1555,8 +1559,8 @@
       const p=pCart(c.id);
       if(!p) continue;
       const dig = p.jenis==='digital';
-      if(!dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
-      if(!dig && c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+      if(KURANGI_STOK && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+      if(KURANGI_STOK && !dig && c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
     const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaBaris(c).h; return s+h*c.q; },0);
     const diskon=diskonCart; // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
@@ -1655,7 +1659,7 @@
             const stokInfo = items.map(it=>{
               const p=PRODUK.find(x=>x.id===Number(it.produk_id));
               const sebelum = p?p.s:null;
-              if(p && nonBon){ p.s = Math.max(0, p.s - Number(it.qty)); }
+              if(p && nonBon && KURANGI_STOK){ p.s = Math.max(0, p.s - Number(it.qty)); }
               return `id${it.produk_id}:${sebelum==null?'?':sebelum}->${nonBon?(p?p.s:'?'):'hold'}(q${it.qty})`;
             }).join(' ');
             logErr('STOK', `trx ${noTransaksi} tebus=${isTebus?1:0} :: ${stokInfo}`);
@@ -2127,6 +2131,9 @@
         if(l.telepon!=null) TOKO_INFO.telepon = l.telepon;
         if(l.catatan_struk!=null) TOKO_INFO.catatan_struk = l.catatan_struk;
         if(l.desain_nota!=null) TOKO_INFO.desain_nota = l.desain_nota;
+        // Kebijakan stok ikut lisensi (sync /api/pengaturan). undefined (meta
+        // lama) → tetap default true.
+        if(l.kurangi_stok!=null) KURANGI_STOK = !!l.kurangi_stok;
       }
       if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
       let expiredAt=l.langganan_sampai?new Date(l.langganan_sampai.replace(' ','T').replace(/Z$/,'')+'Z').getTime():null;
