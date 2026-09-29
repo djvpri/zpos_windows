@@ -316,7 +316,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
                 0
             }
         };
-        let n_push = c.push_antrian(conn)?;
+        let n_push = c.push_antrian(conn, None)?;
         Ok((n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv, n_push))
     })();
     match &r {
@@ -332,7 +332,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
 // tarik penuh (sync_remote) bisa dijalankan jarang — menahan db.lock jauh
 // lebih singkat → UI tak blokir lama.
 #[tauri::command]
-fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String) -> Result<usize, String> {
+fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String, user_id: Option<i64>) -> Result<usize, String> {
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
     let meta_tok: String = conn.query_row(
@@ -340,7 +340,7 @@ fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: St
     ).unwrap_or_default();
     let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
     let c = sync::SyncClient::new(base_url.clone(), token);
-    let n = c.push_antrian(conn)?;
+    let n = c.push_antrian(conn, user_id)?;
     submit_log(&app, &format!("push_antrian_only OK push={n}"));
     Ok(n)
 }

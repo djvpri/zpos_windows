@@ -939,7 +939,10 @@ impl SyncClient {
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.
     // client_ref di server mencegah duplikat jika request pas tiba saat koneksi
     // terputus (idempotency — cara yang sama dipakai ZPos web).
-    pub fn push_antrian(&self, conn: &mut Connection) -> Result<usize, String> {
+    pub fn push_antrian(&self, conn: &mut Connection, user_id: Option<i64>) -> Result<usize, String> {
+        // Upgrade shift AKTIF offline (id negatif → id server) SEBELUM push, supaya
+        // transaksi masuk ke shift server yg benar & frontend bisa baca saldo online.
+        if let Some(uid) = user_id { let _ = self.upgrade_shift_offline(conn, uid); }
         // Replay shift OFFLINE yg ditutup (Fase 2) SEBELUM menaruh transaksi dgn
         // shift_id negatif, supaya server punya shift dengan id positif utk repoint.
         self.sync_replay_shift(conn)?;
@@ -995,12 +998,101 @@ impl SyncClient {
         resp.json::<Value>().map_err(|e| format!("json: {e}"))
     }
 
-    // Fase 2 — replay shift OFFLINE yg sudah ditutup ke server saat online:
-    // (1) POST /api/shift dgn buka_at asli → dapat id positif server
-    // (2) repoint semua antrian yg punya trx.shift_id==old_id(negatif) -> new_id
-    // (3) kirim kas keluar offline (total) ke shift baru
-    // (4) hapus dari pending + meta kas_offline.
-    // Dipanggil di awal `push_antrian`, SEBELUM transaksi dgn shift_id lama di-push.
+        // Upgrade shift LOKAL (id negatif) yang MASIH BERJALAN → shift server (id
+        // positif), supaya saldo & transaksi berikutnya konsisten dgn web Z1 Pos.
+        // Berbeda dgn `sync_replay_shift` (hanya shift yg SUDAH ditutup via
+        // `shift_sync_pending`), ini utk shift aktif: tanpa ini `SHIFT.id` frontend
+        // tetap negatif setelah online → saldo dibaca dari SQLite lokal (`antrian`
+        // yg sudah kosong krn ter-push) → saldo jatuh ke modal_awal.
+        // Return Some(new_id) saat sukses, None kalau offline / tak perlu upgrade.
+        pub fn upgrade_shift_offline(&self, conn: &mut Connection, user_id: i64) -> Result<Option<i64>, String> {
+            // Cek flag: hanya shift lokal yg belum punya id server.
+            let is_offline: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE k=?1)",
+                [format!("shift_offline_{user_id}")],
+                |r| r.get::<_, i64>(0),
+            ).unwrap_or(0) == 1;
+            if !is_offline { return Ok(None); }
+
+            let cur: Option<ShiftAktif> = conn.query_row(
+                "SELECT v FROM meta WHERE k=?1", [format!("shift_{user_id}")],
+                |r| r.get::<_, String>(0),
+            ).ok().and_then(|v| serde_json::from_str(&v).ok());
+            let Some(cur) = cur else { return Ok(None); };
+            if cur.id >= 0 { return Ok(None); } // sudah punya id server
+
+            let old_id = cur.id;
+            // buka_at: bisa ISO ("2026-...") atau epoch detik (Fase 1) → konversi ke ISO.
+            let mut buka_iso = cur.buka_at.clone();
+            if let Ok(secs) = buka_iso.trim().parse::<i64>() {
+                let d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64);
+                let dt: chrono::DateTime<chrono::Utc> = d.into();
+                buka_iso = dt.to_rfc3339();
+            }
+            let body = serde_json::json!({
+                "modal_awal": cur.modal_awal,
+                "user_id": user_id,
+                "buka_at": if buka_iso.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(buka_iso) },
+            });
+            let resp = match self.http.post(self.endpoint("/api/shift"))
+                .header("Cookie", self.auth_cookie())
+                .json(&body)
+                .send() {
+                Ok(r) => r,
+                Err(_) => return Ok(None), // masih offline → coba siklus berikutnya
+            };
+            if !resp.status().is_success() { return Ok(None); }
+            #[derive(Deserialize)]
+            struct NewShift { id: i64 }
+            let ns = match resp.json::<NewShift>() {
+                Ok(v) => v,
+                Err(_) => return Ok(None),
+            };
+
+            // Repoint transaksi BELUM TERKIRIM: trx.shift_id old_id(neg) → new_id.
+            // (Yang sudah ter-push tak ada di antrian lagi; server terima shift_id
+            //  baru di `push_antrian` nanti; baris antrian ini belum dikirim.)
+            let rows: Vec<(i64, String)> = {
+                let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
+                let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
+            };
+            for (aid, produk) in rows {
+                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&produk) {
+                    let hit = v.get("trx").and_then(|t| t.get("shift_id"))
+                        .and_then(|x| x.as_i64()) == Some(old_id);
+                    if hit {
+                        v["trx"]["shift_id"] = serde_json::json!(ns.id);
+                        let s = serde_json::to_string(&v).map_err(|e| e.to_string())?;
+                        conn.execute("UPDATE antrian SET produk=?1 WHERE id=?2",
+                            rusqlite::params![s, aid]).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+
+            // Kirim kas keluar offline yg sudah tercatat ke shift server.
+            self.kirim_kas_keluar_offline(conn, Some(user_id), old_id, ns.id)?;
+
+            // Simpan shift baru dgn id server → meta.shift_{user} terbaca benar saat
+            // restart (ambil_shift/cek_shift) & frontend bisa baca saldo dari server.
+            let s = ShiftAktif {
+                id: ns.id, nomor_shift: None,
+                kasir_nama: cur.kasir_nama.clone(),
+                modal_awal: cur.modal_awal, buka_at: cur.buka_at.clone(),
+                offline: false,
+            };
+            self.store_shift(conn, user_id, &s)?;
+            let _ = conn.execute("DELETE FROM meta WHERE k=?1", [format!("shift_offline_{user_id}")]);
+            Ok(Some(ns.id))
+        }
+
+        // Fase 2 — replay shift OFFLINE yg sudah ditutup ke server saat online:
+        // (1) POST /api/shift dgn buka_at asli → dapat id positif server
+        // (2) repoint semua antrian yg punya trx.shift_id==old_id(negatif) -> new_id
+        // (3) kirim kas keluar offline (total) ke shift baru
+        // (4) hapus dari pending + meta kas_offline.
+        // Dipanggil di awal `push_antrian`, SEBELUM transaksi dgn shift_id lama di-push.
     pub fn sync_replay_shift(&self, conn: &mut Connection) -> Result<usize, String> {
         let raw: String = conn.query_row(
             "SELECT COALESCE(v,'[]') FROM meta WHERE k='shift_sync_pending'",

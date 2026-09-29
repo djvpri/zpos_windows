@@ -1711,7 +1711,7 @@
           // SEKARANG, bukan nunggu siklus 60s — stok web update instan. Kalau
           // offline, gagal diam (bakal ter-push siklus berikutnya).
           if(navigator.onLine || document.visibilityState !== 'hidden'){
-            try{ const pushed=await tinv('push_antrian_only',{baseUrl:localStorage.getItem('zpos_base')||'', token:''}); if(pushed>0){ refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); } }catch(e){}
+            try{ const pushed=await tinv('push_antrian_only',{baseUrl:localStorage.getItem('zpos_base')||'', token:'', userId: kasirAktif? kasirAktif.id : null}); if(pushed>0){ refShiftIfUpgraded(); refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); } }catch(e){}
           }
         })
         .catch(()=>toast('Gagal simpan antrian'));
@@ -2180,6 +2180,17 @@
   }
   // ===== Saldo kas (server hitung: modal + tunai − kas keluar) =====
   let KAS=null;      // cache saldo shift terakhir (utk badge offline)
+  // Setelah push_antrian_only sukses: kalau shift offline baru di-upgrade ke
+  // id server (Rust update meta.shift_{uid} + hapus flag offline), refresh SHIFT
+  // di frontend supaya saldo dibaca dari server, bukan SQLite lokal yg sudah kosong.
+  function refShiftIfUpgraded(){
+    if(!zposIsTauri() || !kasirAktif) return;
+    tinv('ambil_shift',{userId:kasirAktif.id, baseUrl:localStorage.getItem('zpos_base')||''}).then(s=>{
+      if(SHIFT && SHIFT.id<0 && s && s.id>0){
+        SHIFT=s; refShift(); toast('Shift tersinkron ke server (offline→online)');
+      } else if(s && (!SHIFT || SHIFT.id!==s.id)){ SHIFT=s; refShift(); }
+    }).catch(()=>{});
+  }
   function refKas(){
     const b=document.getElementById('kasBadge');
     if(!b) return;
@@ -2840,7 +2851,7 @@
       }else{
         // Push ringan: antrian offline → server. Tak mengubah katalog lokal, jadi
         // tak usah initKasir (render berat). Cukup refresh badge kas + antrian.
-        const pushed=await tinv('push_antrian_only',{baseUrl:base, token:''});
+        const pushed=await tinv('push_antrian_only',{baseUrl:base, token:'', userId: kasirAktif? kasirAktif.id : null});
         if(pushed>0){ refKas(); offQtn=await tinv('jumlah_antrian'); renderOffQ(); }
       }
       autoErrShown=false; autoFailCount=0; autoRetryMs=10000; // sukses → reset
