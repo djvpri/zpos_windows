@@ -838,7 +838,9 @@
       // Produk DIGITAL (jual pulsa/tagihan via Digiflazz): selalu bisa diklik
       // walau stok 0 (produk virtual — server force stok 0), ditandai badge.
       const dig = p.jenis==='digital';
-      return `<div class="card ${!dig&&p.s<=0?'empty':(!dig&&p.s<5?'low':'')}" onclick="${(!dig&&p.s<=0)?'void(0)':`add(${p.id})`}">
+      // KURANGI_STOK=OFF: stok tak diurus, semua barang bisa diklik (jual bebas).
+      const blok = !dig && KURANGI_STOK && p.s<=0;
+      return `<div class="card ${blok?'empty':(!dig&&p.s<5?'low':'')}" onclick="${blok?'void(0)':`add(${p.id})`}">
         <div class="ph"><i class="bi ${p.e||(dig?'bi-phone':'bi-box')}"></i></div><div class="nm">${p.n}${dig?' <span style="color:#22c55e;font-size:10px;padding:1px 6px;border:1px solid #22c55e;border-radius:9px">DIGITAL</span>':''}</div>
         <div class="pr">${fmt(p.p)}</div><div class="stk">${dig?'':'stok '+p.s}</div>
       </div>`;
@@ -2133,7 +2135,13 @@
         if(l.desain_nota!=null) TOKO_INFO.desain_nota = l.desain_nota;
         // Kebijakan stok ikut lisensi (sync /api/pengaturan). undefined (meta
         // lama) → tetap default true.
-        if(l.kurangi_stok!=null) KURANGI_STOK = !!l.kurangi_stok;
+        if(l.kurangi_stok!=null){
+          const baru = !!l.kurangi_stok;
+          // Render katalog sudah keburu pakai default true waktu startup —
+          // ulang render kalau nilainya beda, supaya kartu stok 0 langsung
+          // bisa diklik (OFF) atau terblokir (ON) tanpa restart.
+          if(baru!==KURANGI_STOK){ KURANGI_STOK=baru; try{ render(); }catch(e){} }
+        }
       }
       if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
       let expiredAt=l.langganan_sampai?new Date(l.langganan_sampai.replace(' ','T').replace(/Z$/,'')+'Z').getTime():null;
