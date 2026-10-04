@@ -880,6 +880,8 @@
   window.addEventListener('keydown', function(e){
     if(!scanMode) return;
     const k=e.key;
+    // k bisa undefined utk keydown sintetis (perangkat scanner tertentu/ekstensi)
+    if(k==null) return;
     if(k==='Enter'){
       if(scanBuf.length>=3){
         const raw=scanBuf; scanBuf='';
