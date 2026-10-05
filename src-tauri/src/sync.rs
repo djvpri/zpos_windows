@@ -227,6 +227,14 @@ impl SyncClient {
     // ketahuan 401/404/500, endpoint mana, & pesannya). Panggil HANYA di return.
     fn err_detail(&self, resp: reqwest::blocking::Response) -> String {
         let status = resp.status();
+        // Header DIAMBIL DULU — `.text()` mengonsumsi resp (use-after-move kalau
+        // headers() dipanggil setelahnya; tak akan compile).
+        let srv = resp
+            .headers()
+            .get("x-srv-timing")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| format!("srv={s}ms"))
+            .unwrap_or_default();
         let body = match resp.text() {
             Ok(b) => {
                 let b = b.trim();
@@ -237,8 +245,11 @@ impl SyncClient {
         // Catatan: body `null` dgn 401 = endpoint auth-token (/api/auth/me) menolak
         // token_jwt (stale/JWT_SECRET beda) — bukan kredensial salah. Body JSON error
         // (mis "Email atau password salah") = kredensial. base ikut utk identifikasi server.
-        if body.is_empty() { format!("HTTP {status} @ {}", self.base) }
-        else { format!("HTTP {status} @ {}: {body}", self.base) }
+        // Header x-srv-timing (dari apiHandler z1pos) = lama PROSES di server.
+        // srv tinggi → server lambat; srv rendah + koneksi error → jaringan.
+        let core = if body.is_empty() { format!("HTTP {status} @ {}", self.base) }
+        else { format!("HTTP {status} @ {}: {body}", self.base) };
+        if srv.is_empty() { core } else { format!("{core} [{srv}]") }
     }
 
     // GET dengan retry 1x koneksi segar. Akar: reqwest pooling koneksi stale di

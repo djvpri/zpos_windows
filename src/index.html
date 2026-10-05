@@ -686,6 +686,9 @@
   async function diagnosaSync(asal, e){
     var m=(e&&e.message?e.message:String(e||'?'));
     var baris='DIAG | asal='+asal+' | '+m;
+    // Diagnosa jaringan: WiFi/sinyal + TCP probe anchor & server + kesimpulan.
+    // Gagal (versi lama / browser) → diam, DIAG tetap jalan.
+    try{ baris+=' | NET['+(await tinv('network_diag',{baseUrl:(localStorage.getItem('zpos_base')||'')}))+']'; }catch(_){}
     const pb=(typeof localStorage!=='undefined'?localStorage.getItem('zpos_base'):'')||'';
     var t0=Date.now();
     try{

@@ -935,6 +935,98 @@ fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
     Ok(std::fs::read_to_string(&cfg).map(|s| s.trim().to_string()).unwrap_or_else(|_| base.display().to_string()))
 }
 
+// ---------- Diagnosa jaringan kasir (ditempel ke log error) ----------
+// Satu snapshot: nama WiFi + kekuatan sinyal (netsh), TCP probe anchor publik
+// (1.1.1.1:443) & TCP probe server z1pos. Kombinasi menjawab "gangguan di mana":
+//   anchor DOWN              → internet kasir mati/jelek (bukan server)
+//   anchor OK, server DOWN   → server/rute tak terjangkau (internet kasir OK)
+//   signal < 40%             → WiFi lemah (jarak/tembok ke AP)
+// Label netsh ikut bahasa Windows ("SSID"/"Signal" vs "Sinyal") → parse POLA
+// (value berakhir '%'), bukan kata label.
+fn tcp_probe(host: &str, port: u16) -> Option<u128> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let t0 = std::time::Instant::now();
+    let addrs: Vec<std::net::SocketAddr> = (host, port).to_socket_addrs().ok()?.collect();
+    for a in addrs {
+        if TcpStream::connect_timeout(&a, std::time::Duration::from_secs(2)).is_ok() {
+            return Some(t0.elapsed().as_millis());
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn network_diag(base_url: String) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let sh = std::process::Command::new("netsh").args(["wlan", "show", "interfaces"]).output();
+    match sh {
+        Ok(o) => {
+            let txt = String::from_utf8_lossy(&o.stdout);
+            let mut ssid = String::new();
+            let mut sig = String::new();
+            for line in txt.lines() {
+                if let Some(p) = line.find(':') {
+                    let k = line[..p].trim().to_lowercase();
+                    let v = line[p + 1..].trim();
+                    // SSID: key mengandung "ssid" tapi bukan "bssid", value non-%
+                    if !k.contains("bssid") && k.contains("ssid") && ssid.is_empty()
+                        && !v.is_empty() && !v.contains('%')
+                    { ssid = v.to_string(); }
+                    // sinyal: value pola "NN%" (locale-independent; "86 %" juga lolos)
+                    if sig.is_empty() {
+                        if let Some(pc) = v.strip_suffix('%').map(|p| p.trim()) {
+                            if !pc.is_empty() && pc.chars().all(|c| c.is_ascii_digit()) { sig = v.to_string(); }
+                        }
+                    }
+                }
+            }
+            if ssid.is_empty() {
+                out.push("wifi=-".into()); // ethernet / tak ada adapter wlan
+            } else {
+                out.push(format!("wifi={ssid} signal={sig}"));
+                if let Some(pc) = sig.strip_suffix('%').map(|p| p.trim()) {
+                    if let Ok(n) = pc.parse::<u32>() {
+                        if n < 40 { out.push("SINYAL_LEMAH".into()); }
+                    }
+                }
+            }
+        }
+        Err(e) => out.push(format!("wifi=? (netsh: {e})")),
+    }
+    // host:port server dari base_url (scheme http tanpa port → 80, https → 443)
+    let (shost, sport) = {
+        let s = base_url.trim().trim_end_matches('/');
+        let (rest, defport) = if let Some(r) = s.strip_prefix("https://") { (r, 443u16) }
+            else if let Some(r) = s.strip_prefix("http://") { (r, 80u16) }
+            else { (s, 443u16) };
+        let hp = rest.split('/').next().unwrap_or("");
+        match hp.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())
+                => (h.to_string(), p.parse::<u16>().unwrap_or(defport)),
+            _ => (hp.to_string(), defport),
+        }
+    };
+    match tcp_probe("1.1.1.1", 443) {
+        Some(ms) => out.push(format!("anchor={ms}ms")),
+        None => out.push("anchor=DOWN".into()),
+    }
+    if !shost.is_empty() {
+        match tcp_probe(&shost, sport) {
+            Some(ms) => out.push(format!("server={ms}ms")),
+            None => out.push(format!("server=DOWN({shost}:{sport})")),
+        }
+    }
+    let verdict = if out.iter().any(|s| s == "anchor=DOWN") {
+        "KESIMPULAN: internet kasir MATI/jelek"
+    } else if out.iter().any(|s| s.starts_with("server=DOWN")) {
+        "KESIMPULAN: server tak terjangkau dari kasir (internet kasir OK)"
+    } else {
+        "KESIMPULAN: jaringan kasir OK"
+    };
+    out.push(verdict.into());
+    out.join(" | ")
+}
+
 // Tulis satu baris ke zpos-errors.log (app append, timestamp readable).
 // Fire-and-forget: gagal nulis TIDAK menggagalkan aksi utama.
 fn submit_log(app: &tauri::AppHandle, msg: &str) {
@@ -1373,6 +1465,7 @@ fn run() {
             buka_url,
             unduh_update, terapkan_update, apply_update, keluar,
             tulis_log, baca_log, export_log, pilih_log_dir, get_log_dir, nota_temp,
+            network_diag,
             kirim_log_error,
             daftar_printer, cetak_escpos, buka_laci, ambil_lisensi, ambil_bon_sync,
             buka_shift, tutup_shift, ambil_shift,
