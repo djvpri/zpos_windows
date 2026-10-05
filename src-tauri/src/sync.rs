@@ -241,13 +241,33 @@ impl SyncClient {
         else { format!("HTTP {status} @ {}: {body}", self.base) }
     }
 
+    // GET dengan retry 1x koneksi segar. Akar: reqwest pooling koneksi stale di
+    // jaringan toko (WiFi/indoors) → "error decoding response body" / "network"
+    // saat baca body, BERULANG tiap auto-sync (1.304 baris log/48h di satu toko).
+    // Koneksi baru (client baru) hampir selalu sukses — pola sama dgn `unduh_update`
+    // (lib.rs). Hanya utk GET pull (idempoten); push transaksi TIDAK lewat sini
+    // (retry POST tak aman walau ada client_ref).
+    fn get_fresh(&self, path: &str) -> Result<reqwest::blocking::Response, String> {
+        let url = self.endpoint(path);
+        let mut last = String::new();
+        for attempt in 0..2 {
+            // Client BARU tiap percobaan = koneksi segar, tanpa pool basi.
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build().map_err(|e| format!("build client: {e}"))?;
+            match client.get(&url).header("Cookie", self.auth_cookie()).send() {
+                Ok(resp) => return Ok(resp),
+                Err(e) => { last = format!("network: {e}"); std::thread::sleep(std::time::Duration::from_millis(500)); }
+            }
+        }
+        Err(last)
+    }
+
     // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang
     // dari server dibiarkan (kasir boleh tetap menjual stok lama) — sinkron
     // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
     pub fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/produk?semua=1"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/produk?semua=1")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         // Baca body MENTAH lalu parse serde sendiri supaya kalau decode gagal
         // kita dapat detail PERSIS (panjang body + pesan serde field/baris + head
@@ -299,9 +319,7 @@ impl SyncClient {
     // Kategori produk dari server → upsert (id, nama). Dipakai list_produk utk
     // join nama kategori → frontend tampilkan ikon & filter kategori.
     pub fn pull_kategori(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/kategori"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/kategori")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteKategori> = resp.json().map_err(|e| format!("json@kategori: {e}"))?;
 
@@ -326,9 +344,7 @@ impl SyncClient {
     // "Lainnya". Bon lama tak terpengaruh — nama+harga item sudah tersimpan di
     // vmap bon masing-masing.
     pub fn pull_item_virtual(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/item-virtual"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/item-virtual")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteItemVirtual> = resp.json().map_err(|e| format!("json@item_virtual: {e}"))?;
 
@@ -382,9 +398,7 @@ impl SyncClient {
 
     // Member + kategori member dari server → upsert.
     pub fn pull_member(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/member"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/member")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let list: Vec<RemoteMember> = resp.json().map_err(|e| format!("json@member: {e}"))?;
 
@@ -412,9 +426,7 @@ impl SyncClient {
     // Sebelumnya kategori member HANYA di-fetch live (dropdown online) & tak pernah
     // di-persist → LEFT JOIN `list_member` selalu null (nama kategori & diskon hilang).
     pub fn pull_kategori_member(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/kategori-member"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/kategori-member")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         // Body kosong (200, chunked 0-byte) = toko belum punya kategori → samakan kosong.
         let body = resp.text().map_err(|e| format!("body: {e}"))?;
@@ -465,9 +477,7 @@ impl SyncClient {
     // Daftar user toko (utk login PIN offline) → store_users.
     // Endpoint admin-only `/api/auth/users`; token yg dipakai sync harus admin.
     pub fn pull_users(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/auth/users"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/auth/users")?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}: {}", resp.status().as_u16(),
                 resp.text().unwrap_or_default().trim()));
@@ -484,9 +494,7 @@ impl SyncClient {
     // dibaca offline. Endpoint ini pakai getTokoFromRequest (cookie token) — siapa
     // pun user toko yg valid boleh akses (kasir/admin). Token sync = admin.
     pub fn pull_license(&self, conn: &mut Connection) -> Result<String, String> {
-        let resp = self.http.get(self.endpoint("/api/auth/me"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/auth/me")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         #[derive(Deserialize)]
         struct Me {
@@ -515,9 +523,7 @@ impl SyncClient {
         let mut kurangi_stok = true;
         let mut jual_stok_habis = false;
         {
-            let pr = self.http.get(self.endpoint("/api/pengaturan"))
-                .header("Cookie", self.auth_cookie())
-                .send();
+            let pr = self.get_fresh("/api/pengaturan");
             if let Ok(pre) = pr {
                 if pre.status().is_success() {
                     #[derive(Deserialize)]
@@ -558,9 +564,7 @@ impl SyncClient {
     // selesai TIDAK ditarik (kasir tak perlu). Item virtual id<0 tak ada di web
     // (server tolak) → aman utk pull.
     pub fn pull_bon(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.http.get(self.endpoint("/api/bon"))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh("/api/bon")?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         let body = resp.text().map_err(|e| format!("text: {e}"))?;
         let n: usize = serde_json::from_str::<Vec<serde_json::Value>>(&body)
@@ -729,9 +733,7 @@ impl SyncClient {
     // Saldo kas live utk shift: server hitung modal + total_tunai − kas_keluar.
     // Pakai GET `/api/shift/{id}` (detail rekap). Offline → Err (frontend cache).
     pub fn saldo_shift(&self, shift_id: i64) -> Result<SaldoShift, String> {
-        let resp = self.http.get(self.endpoint(&format!("/api/shift/{shift_id}")))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh(&format!("/api/shift/{shift_id}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         #[derive(Deserialize)]
         struct Raw {
@@ -832,9 +834,7 @@ impl SyncClient {
 
     // Daftar pengeluaran kas utk shift → GET /api/kas-keluar?shift_id=...
     pub fn daftar_kas_keluar(&self, shift_id: i64) -> Result<Vec<KasKeluar>, String> {
-        let resp = self.http.get(self.endpoint(&format!("/api/kas-keluar?shift_id={shift_id}")))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh(&format!("/api/kas-keluar?shift_id={shift_id}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         resp.json().map_err(|e| format!("json: {e}"))
     }
@@ -854,9 +854,7 @@ impl SyncClient {
             ).ok().and_then(|v| serde_json::from_str(&v).ok());
             return Ok(s);
         }
-        let resp = self.http.get(self.endpoint(&format!("/api/shift/active?user_id={user_id}")))
-            .header("Cookie", self.auth_cookie())
-            .send().map_err(|e| format!("network: {e}"))?;
+        let resp = self.get_fresh(&format!("/api/shift/active?user_id={user_id}"))?;
         if !resp.status().is_success() { return Err(self.err_detail(resp)); }
         #[derive(Deserialize)]
         struct Res { shift: Option<ShiftAktif> }
