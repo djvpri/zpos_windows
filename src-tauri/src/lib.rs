@@ -278,6 +278,9 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
             for tbl in ["produk", "kategori", "member", "harga_member", "item_virtual"] {
                 conn.execute(&format!("DELETE FROM {tbl}"), []).map_err(|e| e.to_string())?;
             }
+            // Reset incremental sync timestamp — `since` dari tenant lama akan
+            // skip produk tenant baru. Kosongkan supaya sync berikutnya full pull.
+            conn.execute("DELETE FROM meta WHERE k='sync_produk_at'", []).map_err(|e| e.to_string())?;
         }
         conn.execute(
             "INSERT INTO meta (k,v) VALUES ('toko_terakhir',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",

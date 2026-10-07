@@ -29,6 +29,10 @@ pub struct RemoteProduk {
     pub buyer_sku_code: Option<String>,
     #[serde(default)]
     pub digital_brand: Option<String>,
+    // Server kirim updated_at (ISO string). Dipakai utk incremental sync:
+    // simpan timestamp produk terbaru → sync berikutnya kirim `since=<ts>`.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -277,15 +281,27 @@ impl SyncClient {
     // Katalog produk dari server → upsert ke SQLite. Produk yang sudah hilang
     // dari server dibiarkan (kasir boleh tetap menjual stok lama) — sinkron
     // penuh (hapus di lokal) cukup lewat cara lain; `ponytail:` fitur itu.
+    //
+    // Incremental sync: baca meta `sync_produk_at` (timestamp sync sukses terakhir).
+    // Kirim `since=<ts>` ke server → hanya produk updated_at > ts. Pertama kali
+    // (meta kosong) = full pull. Setelah sukses, simpan updated_at TERBARU dari
+    // batch ini sebagai `sync_produk_at` utk siklus berikutnya.
+    //
+    // Retry 2×: koneksi flaky (WiFi extender) sering truncate body. Retry sekali
+    // kalau network error, bukan langsung GAGAL.
     pub fn pull_produk(&self, conn: &mut Connection) -> Result<usize, String> {
-        let resp = self.get_fresh("/api/produk?semua=1")?;
-        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
-        // Baca body MENTAH lalu parse serde sendiri supaya kalau decode gagal
-        // kita dapat detail PERSIS (panjang body + pesan serde field/baris + head
-        // body) — reqwest `.json::<Vec<_>>()` menyembunyikan itu ("error decoding
-        // response body" generik), mustahil tahu isi yg server balas. Instrument
-        // utk diagnosa offline `json@produk`. Sukses tidak berubah perilaku.
-        let raw = resp.text().map_err(|e| format!("body: {e}"))?;
+        let since: String = conn.query_row(
+            "SELECT v FROM meta WHERE k='sync_produk_at'", [],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default();
+
+        let path = if since.is_empty() {
+            "/api/produk?semua=1".to_string()
+        } else {
+            format!("/api/produk?semua=1&since={}", urlencode(&since))
+        };
+
+        let raw = self.fetch_produk_raw(&path, 2)?;
         let list: Vec<RemoteProduk> = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(e) => {
@@ -297,6 +313,13 @@ impl SyncClient {
                 ));
             }
         };
+
+        // updated_at TERBESAR dari batch ini → simpan sbg `sync_produk_at`.
+        // Ambil dari field server (ISO string). Fallback: kosong (jangan update meta).
+        let max_updated = list.iter()
+            .filter_map(|p| p.updated_at.as_deref())
+            .max()
+            .map(String::from);
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
         {
@@ -324,7 +347,36 @@ impl SyncClient {
             }
         }
         tx.commit().map_err(|e| e.to_string())?;
+
+        // Simpan timestamp sync sukses utk incremental berikutnya.
+        if let Some(ts) = max_updated {
+            conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('sync_produk_at',?1)
+                 ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [&ts],
+            ).map_err(|e| e.to_string())?;
+        }
+
         Ok(list.len())
+    }
+
+    // Fetch raw produk JSON dengan retry. Gunakan get_fresh (client baru tiap
+    // attempt, retry network-level) lalu retry body-read (truncate mid-transfer).
+    // HTTP non-2xx → langsung return error (bukan masalah transport).
+    fn fetch_produk_raw(&self, path: &str, attempts: u8) -> Result<String, String> {
+        let resp = self.get_fresh(path)?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        match resp.text() {
+            Ok(raw) => Ok(raw),
+            Err(e) => {
+                if attempts > 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    self.fetch_produk_raw(path, attempts - 1)
+                } else {
+                    Err(format!("body: {e}"))
+                }
+            }
+        }
     }
 
     // Kategori produk dari server → upsert (id, nama). Dipakai list_produk utk
@@ -1316,4 +1368,17 @@ impl SyncClient {
             Err(format!("hapus bon {}: {}", bon_id, self.err_detail(resp)))
         }
     }
+}
+
+// Minimal URL encode utk `since` timestamp (ISO string punya `+` `:` spasi).
+// Hindari dependency tambahan — cukup encode char yg break query string.
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
