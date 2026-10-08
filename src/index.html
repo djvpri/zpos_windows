@@ -2855,8 +2855,10 @@
       if(doPull){
         await tinv('sync_remote',{baseUrl:base, token:''});
         lastPull=Date.now();
-        // Katalog bisa berubah (produk/harga/stok) → re-init penuh hanya saat pull.
-        await initKasir();
+        // Re-init katalog hanya jika kasir tidak sedang pegang transaksi (cart kosong).
+        // Saat cart isi, initKasir re-render grid produk = UI flicker + gangguan kasir.
+        // Katalog baru efektif di transaksi berikutnya (kasir tap produk = baca DB baru).
+        if(cart.length===0){ await initKasir(); }
         await mergeBonSync(); // tarik+merge bon gantung aktif dari device/kasir lain
       }else{
         // Push ringan: antrian offline → server. Tak mengubah katalog lokal, jadi

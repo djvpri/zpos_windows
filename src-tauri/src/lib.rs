@@ -249,6 +249,15 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     // ditahan (no await lintas), jadi tak ada masalah Send. Request pakai
     // reqwest::blocking (lihat Cargo.toml: fitur "blocking").
     // Jangan pernah tulis token asli ke log — cukup tandai ada/tidak.
+    // Pre-flight probe: cek server reachable TANPA pegang db.lock.
+    // Jika server tidak reachable, skip sync sepenuhnya — tidak freeze UI.
+    {
+        let probe_client = sync::SyncClient::new(base_url.clone(), String::new());
+        if !probe_client.probe() {
+            submit_log(&app, &format!("sync SKIP (server tidak reachable) base={base_url}"));
+            return Err("server tidak reachable".to_string());
+        }
+    }
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
     // Prioritas token: meta `token_jwt` (hasil setup email+password yg pasti JWT valid).
@@ -336,6 +345,14 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
 // lebih singkat → UI tak blokir lama.
 #[tauri::command]
 fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String, user_id: Option<i64>) -> Result<usize, String> {
+    // Pre-flight probe: cek server reachable TANPA pegang db.lock.
+    // Mencegah UI freeze saat push_antrian dipanggil saat jaringan putus.
+    {
+        let probe_client = sync::SyncClient::new(base_url.clone(), String::new());
+        if !probe_client.probe() {
+            return Err("server tidak reachable".to_string());
+        }
+    }
     let mut guard = state.db.lock().map_err(|e| e.to_string())?;
     let conn = &mut *guard;
     let meta_tok: String = conn.query_row(

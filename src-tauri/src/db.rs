@@ -10,6 +10,7 @@ pub fn init(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
         PRAGMA journal_mode = WAL;
+        PRAGMA busy_timeout = 5000;
 
         CREATE TABLE IF NOT EXISTS produk (
             id          INTEGER PRIMARY KEY,

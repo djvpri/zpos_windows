@@ -206,7 +206,7 @@ impl SyncClient {
         // Catatan: `connect_timeout` TIDAK efektif di blocking (butuh tokio runtime),
         // jadi satusatunya batas andal = `.timeout()` total request.
         let http = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))  // total per-request = deteksi offline cepat
+            .timeout(std::time::Duration::from_secs(5))  // total per-request — singkat supaya db.lock tidak ditahan lama saat jaringan putus
             .build()
             .expect("build sync http client");
         let http_fast = reqwest::blocking::Client::builder()
@@ -256,6 +256,22 @@ impl SyncClient {
         if srv.is_empty() { core } else { format!("{core} [{srv}]") }
     }
 
+    // Pre-flight TCP probe: cek server reachable sebelum pegang DB lock.
+    // Mencegah UI freeze saat jaringan putus — sync_remote/push skip cepat
+    // tanpa menahan db.lock selama timeout HTTP (10s per endpoint).
+    pub fn probe(&self) -> bool {
+        let url = self.endpoint("/api/auth/me");
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap_or_else(|_| reqwest::blocking::Client::new());
+        client
+            .get(&url)
+            .header("Cookie", self.auth_cookie())
+            .send()
+            .is_ok()
+    }
+
     // GET dengan retry 1x koneksi segar. Akar: reqwest pooling koneksi stale di
     // jaringan toko (WiFi/indoors) → "error decoding response body" / "network"
     // saat baca body, BERULANG tiap auto-sync (1.304 baris log/48h di satu toko).
@@ -268,7 +284,7 @@ impl SyncClient {
         for attempt in 0..2 {
             // Client BARU tiap percobaan = koneksi segar, tanpa pool basi.
             let client = reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(5))
                 .build().map_err(|e| format!("build client: {e}"))?;
             match client.get(&url).header("Cookie", self.auth_cookie()).send() {
                 Ok(resp) => return Ok(resp),
