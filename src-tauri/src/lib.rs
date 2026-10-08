@@ -245,10 +245,7 @@ fn login_pin(state: State<AppState>, user_id: i64, pin: String) -> Result<bool, 
 // Panggil sinkron: tarik katalog+member, lalu kirim antrian. Butuh base_url + token.
 #[tauri::command]
 fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String) -> Result<String, String> {
-    // Command non-async → Tauri jalankan di worker thread. Guard Mutex boleh
-    // ditahan (no await lintas), jadi tak ada masalah Send. Request pakai
-    // reqwest::blocking (lihat Cargo.toml: fitur "blocking").
-    // Jangan pernah tulis token asli ke log — cukup tandai ada/tidak.
+    // Command non-async → Tauri jalankan di worker thread.
     // Pre-flight probe: cek server reachable TANPA pegang db.lock.
     // Jika server tidak reachable, skip sync sepenuhnya — tidak freeze UI.
     {
@@ -258,84 +255,41 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
             return Err("server tidak reachable".to_string());
         }
     }
-    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = &mut *guard;
-    // Prioritas token: meta `token_jwt` (hasil setup email+password yg pasti JWT valid).
-    // Frontend auto-sync mungkin kirim token lama dr localStorage (mis. JWT_SECRET
-    // yg salah), jadi token param HANYA fallback kalau meta kosong.
-    let meta_tok: String = conn.query_row(
-        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
-    ).unwrap_or_default();
-    let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
+
+    // FASE 1: baca meta (short lock ~1ms). Ambil token_jwt + sync_produk_at.
+    let (token, since_produk) = {
+        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = &mut *guard;
+        let meta_tok: String = conn.query_row(
+            "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+        ).unwrap_or_default();
+        let tok = if !meta_tok.trim().is_empty() { meta_tok } else { token };
+        let since: String = conn.query_row(
+            "SELECT v FROM meta WHERE k='sync_produk_at'", [], |r| r.get::<_, String>(0),
+        ).unwrap_or_default();
+        (tok, since)
+    };
+
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
     let c = sync::SyncClient::new(base_url.clone(), token);
 
-    let r = (|| -> Result<(usize, usize, usize, usize, usize, usize, usize, usize), String> {
-        // `/api/auth/me` pertama: validasi token + dapat nama toko. Nama toko ini
-        // dipakai deteksi GANTI TENANT — kalau beda dari sync sebelumnya, bersihkan
-        // cache katalog/member lokal (produk/kategori upsert tak pernah hapus baris
-        // dari toko lama, jadi kalau tak di-clear katalog tercampur antar tenant).
-        let toko = c.pull_license(conn)?;  // Juga cache lisensi; return nama toko.
-        let last: String = conn.query_row(
-            "SELECT v FROM meta WHERE k='toko_terakhir'", [], |r| r.get::<_, String>(0),
-        ).unwrap_or_default();
-        // Kosong (belum tercatat / upgrade pertama) → anggap beda, bersihkan juga.
-        // Pull isi-ulang penuh dari token valid, jadi hapus cache tak merugikan
-        // (malah memastikan cache yg uda tercampur antar-tenant ikut dibersihkan).
-        if last != toko {
-            submit_log(&app, &format!("sync GANTI TENANT '{last}' -> '{toko}': bersihkan cache katalog/member"));
-            for tbl in ["produk", "kategori", "member", "harga_member", "item_virtual"] {
-                conn.execute(&format!("DELETE FROM {tbl}"), []).map_err(|e| e.to_string())?;
-            }
-            // Reset incremental sync timestamp — `since` dari tenant lama akan
-            // skip produk tenant baru. Kosongkan supaya sync berikutnya full pull.
-            conn.execute("DELETE FROM meta WHERE k='sync_produk_at'", []).map_err(|e| e.to_string())?;
-        }
-        conn.execute(
-            "INSERT INTO meta (k,v) VALUES ('toko_terakhir',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-            [&toko],
-        ).map_err(|e| e.to_string())?;
+    // FASE 2: fetch semua data network TANPA db.lock.
+    // Jika jaringan putus di sini, tidak menahan lock — UI tetap responsif.
+    let batch = c.fetch_all(&since_produk);
 
-        let n_kat = c.pull_kategori(conn)?;
-        let n_produk = c.pull_produk(conn)?;
-        let n_km = c.pull_kategori_member(conn)?;
-        let n_member = c.pull_member(conn)?;
-        // pull_users best-effort: cuma admin boleh (403 utk kasir). Kasir TETAP
-        // bisa sinkron katalog/member; gagal tarik user TIDAK merusak sync.
-        let n_user = match c.pull_users(conn) {
-            Ok(n) => n,
-            Err(e) => {
-                submit_log(&app, &format!("sync pull_users SKIP: {e}"));
-                0
-            }
-        };
-        // pull_bon best-effort: tarik daftar bon gantung AKTIF dari web utk
-        // ditampilkan/dilayani di kasir ini (merge by id di frontend). Gagal tidak
-        // merusak sync (kasir tetap jalan dgn bon lokal).
-        let n_bon = match c.pull_bon(conn) {
-            Ok(n) => n,
-            Err(e) => {
-                submit_log(&app, &format!("sync pull_bon SKIP: {e}"));
-                0
-            }
-        };
-        // pull_item_virtual best-effort: katalog "Lainnya" yang dibagi antar kasir
-        // satu toko. Gagal tidak merusak sync — kasir tetap bisa ketik manual.
-        let n_iv = match c.pull_item_virtual(conn) {
-            Ok(n) => n,
-            Err(e) => {
-                submit_log(&app, &format!("sync pull_item_virtual SKIP: {e}"));
-                0
-            }
-        };
-        let n_push = c.push_antrian(conn, None)?;
-        Ok((n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv, n_push))
-    })();
-    match &r {
-        Ok((kk, pp, km, m, u, b, iv, s)) => submit_log(&app, &format!("sync OK kategori={kk} produk={pp} katmember={km} member={m} user={u} bon={b} itemvirtual={iv} push={s}")),
-        Err(e) => submit_log(&app, &format!("sync GAGAL: {e}")),
-    }
-    let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv, n_push) = r?;
+    // FASE 3: apply semua write ke DB (short lock ~100ms).
+    let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv) = {
+        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = &mut *guard;
+        c.apply_all(conn, batch, &app)
+    };
+
+    submit_log(&app, &format!("sync OK kategori={n_kat} produk={n_produk} katmember={n_km} member={n_member} user={n_user} bon={n_bon} itemvirtual={n_iv}"));
+
+    // FASE 4: push antrian offline (network, butuh lock untuk read+delete rows).
+    // Lock dipakai singkat: read rows → drop lock → POST → re-lock delete.
+    let n_push = c.push_antrian_split(&state.db, None)?;
+
     Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, item-virtual {n_iv}, push {n_push}"))
 }
 
@@ -346,21 +300,24 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
 #[tauri::command]
 fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: String, token: String, user_id: Option<i64>) -> Result<usize, String> {
     // Pre-flight probe: cek server reachable TANPA pegang db.lock.
-    // Mencegah UI freeze saat push_antrian dipanggil saat jaringan putus.
     {
         let probe_client = sync::SyncClient::new(base_url.clone(), String::new());
         if !probe_client.probe() {
             return Err("server tidak reachable".to_string());
         }
     }
-    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
-    let conn = &mut *guard;
-    let meta_tok: String = conn.query_row(
-        "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
-    ).unwrap_or_default();
-    let token = if !meta_tok.trim().is_empty() { meta_tok } else { token };
+    // FASE 1: read token + upgrade shift (short lock)
+    let token = {
+        let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+        let conn = &mut *guard;
+        let meta_tok: String = conn.query_row(
+            "SELECT v FROM meta WHERE k='token_jwt'", [], |r| r.get::<_, String>(0),
+        ).unwrap_or_default();
+        if !meta_tok.trim().is_empty() { meta_tok } else { token }
+    };
     let c = sync::SyncClient::new(base_url.clone(), token);
-    let n = c.push_antrian(conn, user_id)?;
+    // FASE 2: push antrian split (read lock → POST no lock → delete lock)
+    let n = c.push_antrian_split(&state.db, user_id)?;
     submit_log(&app, &format!("push_antrian_only OK push={n}"));
     Ok(n)
 }
@@ -919,7 +876,7 @@ fn keluar(app: tauri::AppHandle) {
 // pakai app_data_dir (bawaan). Ditulis oleh command `pilih_log_dir`.
 const LOG_DIR_FILE: &str = "log_dir.txt";
 
-fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+pub(crate) fn log_path(app: &tauri::AppHandle) -> std::path::PathBuf {
     let base = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let cfg = base.join(LOG_DIR_FILE);
     let dir = std::fs::read_to_string(&cfg)
@@ -1049,7 +1006,7 @@ fn network_diag(base_url: String) -> String {
 
 // Tulis satu baris ke zpos-errors.log (app append, timestamp readable).
 // Fire-and-forget: gagal nulis TIDAK menggagalkan aksi utama.
-fn submit_log(app: &tauri::AppHandle, msg: &str) {
+pub(crate) fn submit_log(app: &tauri::AppHandle, msg: &str) {
     let p = log_path(app);
     let line = format!("{} | {}\n", chrono_now(), msg);
     use std::io::Write;
@@ -1412,7 +1369,7 @@ fn nota_temp(html: String) -> Result<String, String> {
 
 // Timestamp readable lokal. chrono fitur `clock` (default) dipakai — bukan
 // SystemTime/epoch, supaya zpos-errors.log gampang diurut & dibaca.
-fn chrono_now() -> String {
+pub(crate) fn chrono_now() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
 

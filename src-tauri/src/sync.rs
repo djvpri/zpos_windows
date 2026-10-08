@@ -2,6 +2,8 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::submit_log;
+
 #[derive(Debug, Deserialize)]
 pub struct RemoteProduk {
     pub id: i64,
@@ -185,6 +187,19 @@ pub struct KasKeluar {
     pub dibuat_at: String,
 }
 
+/// Semua data hasil fetch network (fase 2). Tiap field = Option — None = fetch
+/// gagal/best-effort skip. `apply_all` tulis hanya yg Some ke DB (fase 3).
+pub struct SyncBatch {
+    pub license: Option<(String, String)>,      // (toko_nama, lisensi_json)
+    pub kategori: Option<Vec<RemoteKategori>>,
+    pub produk: Option<(Vec<RemoteProduk>, Option<String>)>, // (list, max_updated_at)
+    pub kategori_member: Option<Vec<RemoteKategoriMember>>,
+    pub member: Option<Vec<RemoteMember>>,
+    pub users: Option<Vec<RemoteUser>>,
+    pub bon: Option<String>,                     // raw JSON body
+    pub item_virtual: Option<Vec<RemoteItemVirtual>>,
+}
+
 pub struct SyncClient {
     pub base: String,
     pub token: String,
@@ -270,6 +285,291 @@ impl SyncClient {
             .header("Cookie", self.auth_cookie())
             .send()
             .is_ok()
+    }
+
+    /// Fetch semua data dari server TANPA pegang DB lock.
+    /// `since_produk` = timestamp incremental sync produk (dibaca dari meta sebelumnya).
+    /// Tiap endpoint = best-effort: gagal → field None, tidak batalkan seluruh batch.
+    pub fn fetch_all(&self, since_produk: &str) -> SyncBatch {
+        // License: /api/auth/me + /api/pengaturan
+        let license = self.fetch_license().ok();
+        let kategori = self.fetch_kategori().ok();
+        let produk = self.fetch_produk(since_produk).ok();
+        let kategori_member = self.fetch_kategori_member().ok();
+        let member = self.fetch_member().ok();
+        let users = self.fetch_users().ok();
+        let bon = self.fetch_bon().ok();
+        let item_virtual = self.fetch_item_virtual().ok();
+        SyncBatch { license, kategori, produk, kategori_member, member, users, bon, item_virtual }
+    }
+
+    fn fetch_license(&self) -> Result<(String, String), String> {
+        let resp = self.get_fresh("/api/auth/me")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        #[derive(Deserialize)]
+        struct Me {
+            #[serde(default)] nama: String,
+            #[serde(default)] plan: String,
+            #[serde(default)] aktif: bool,
+            #[serde(default)] expired: bool,
+            #[serde(default)] langganan_sampai: Option<String>,
+        }
+        let me: Me = resp.json().map_err(|e| format!("json@me: {e}"))?;
+        let mut alamat = String::new();
+        let mut telepon = String::new();
+        let mut catatan_struk = String::new();
+        let mut desain_nota = String::new();
+        let mut kurangi_stok = true;
+        let mut jual_stok_habis = false;
+        {
+            let pr = self.get_fresh("/api/pengaturan");
+            if let Ok(pre) = pr {
+                if pre.status().is_success() {
+                    #[derive(Deserialize)]
+                    struct Pr {
+                        #[serde(default)] alamat: String,
+                        #[serde(default)] telepon: String,
+                        #[serde(default)] catatan_struk: String,
+                        #[serde(default)] desain_nota: String,
+                        #[serde(default = "stok_default_true")] kurangi_stok: bool,
+                        #[serde(default)] jual_stok_habis: bool,
+                    }
+                    if let Ok(p) = pre.json::<Pr>() {
+                        alamat = p.alamat; telepon = p.telepon; catatan_struk = p.catatan_struk;
+                        desain_nota = p.desain_nota;
+                        kurangi_stok = p.kurangi_stok; jual_stok_habis = p.jual_stok_habis;
+                    }
+                }
+            }
+        }
+        let v = serde_json::json!({
+            "nama": me.nama, "alamat": alamat, "telepon": telepon,
+            "catatan_struk": catatan_struk, "desain_nota": desain_nota,
+            "plan": me.plan, "aktif": me.aktif, "expired": me.expired,
+            "langganan_sampai": me.langganan_sampai,
+            "kurangi_stok": kurangi_stok, "jual_stok_habis": jual_stok_habis,
+        }).to_string();
+        Ok((me.nama, v))
+    }
+
+    fn fetch_kategori(&self) -> Result<Vec<RemoteKategori>, String> {
+        let resp = self.get_fresh("/api/kategori")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.json().map_err(|e| format!("json@kategori: {e}"))
+    }
+
+    fn fetch_produk(&self, since: &str) -> Result<(Vec<RemoteProduk>, Option<String>), String> {
+        let path = if since.is_empty() {
+            "/api/produk?semua=1".to_string()
+        } else {
+            format!("/api/produk?semua=1&since={}", urlencode(since))
+        };
+        let raw = self.fetch_produk_raw(&path, 2)?;
+        let list: Vec<RemoteProduk> = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                let head: String = raw.chars().take(300).collect();
+                let tail: String = raw.chars().skip(raw.chars().count().saturating_sub(120)).collect();
+                return Err(format!(
+                    "json@produk len={} serde: {e} | head[:300]={head} | tail[-120:]={tail}",
+                    raw.len()
+                ));
+            }
+        };
+        let max_updated = list.iter()
+            .filter_map(|p| p.updated_at.as_deref())
+            .max()
+            .map(String::from);
+        Ok((list, max_updated))
+    }
+
+    fn fetch_kategori_member(&self) -> Result<Vec<RemoteKategoriMember>, String> {
+        let resp = self.get_fresh("/api/kategori-member")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        let body = resp.text().map_err(|e| format!("body: {e}"))?;
+        if body.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        serde_json::from_str(&body).map_err(|e| format!("json@kmember: {e}"))
+    }
+
+    fn fetch_member(&self) -> Result<Vec<RemoteMember>, String> {
+        let resp = self.get_fresh("/api/member")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.json().map_err(|e| format!("json@member: {e}"))
+    }
+
+    fn fetch_users(&self) -> Result<Vec<RemoteUser>, String> {
+        let resp = self.get_fresh("/api/auth/users")?;
+        if !resp.status().is_success() {
+            return Err(format!("HTTP {}: {}", resp.status().as_u16(),
+                resp.text().unwrap_or_default().trim()));
+        }
+        let body: RemoteUsersResp = resp.json().map_err(|e| format!("json@users: {e}"))?;
+        Ok(body.users)
+    }
+
+    fn fetch_bon(&self) -> Result<String, String> {
+        let resp = self.get_fresh("/api/bon")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.text().map_err(|e| format!("text: {e}"))
+    }
+
+    fn fetch_item_virtual(&self) -> Result<Vec<RemoteItemVirtual>, String> {
+        let resp = self.get_fresh("/api/item-virtual")?;
+        if !resp.status().is_success() { return Err(self.err_detail(resp)); }
+        resp.json().map_err(|e| format!("json@item_virtual: {e}"))
+    }
+
+    /// Tulis semua fetched data ke DB. Dipanggil dengan lock dipegang — cepat (<100ms).
+    /// Return: (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv)
+    pub fn apply_all(&self, conn: &mut Connection, batch: SyncBatch, app: &tauri::AppHandle) -> (usize, usize, usize, usize, usize, usize, usize) {
+        let mut n_kat = 0; let mut n_produk = 0; let mut n_km = 0;
+        let mut n_member = 0; let mut n_user = 0; let mut n_bon = 0; let mut n_iv = 0;
+
+        // License + tenant check
+        if let Some((toko, lisensi_json)) = batch.license {
+            let last: String = conn.query_row(
+                "SELECT v FROM meta WHERE k='toko_terakhir'", [], |r| r.get::<_, String>(0),
+            ).unwrap_or_default();
+            if last != toko {
+                submit_log(app, &format!("sync GANTI TENANT '{last}' -> '{toko}': bersihkan cache"));
+                for tbl in ["produk", "kategori", "member", "harga_member", "item_virtual"] {
+                    let _ = conn.execute(&format!("DELETE FROM {tbl}"), []);
+                }
+                let _ = conn.execute("DELETE FROM meta WHERE k='sync_produk_at'", []);
+            }
+            let _ = conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('toko_terakhir',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [&toko],
+            );
+            let _ = conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('lisensi',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [&lisensi_json],
+            );
+        }
+
+        // Kategori
+        if let Some(list) = batch.kategori {
+            if let Ok(tx) = conn.transaction() {
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO kategori (id,nama) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET nama=excluded.nama",
+                ) {
+                    for k in &list { let _ = st.execute((k.id, &k.nama)); }
+                }
+                let _ = tx.commit();
+            }
+            n_kat = list.len();
+        }
+
+        // Produk
+        if let Some((list, max_updated)) = batch.produk {
+            if let Ok(tx) = conn.transaction() {
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO produk (id,nama,harga,stok,kategori_id,barcode,barcode_internal,foto_url,jenis,buyer_sku_code,digital_brand,updated_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11, datetime('now'))
+                     ON CONFLICT(id) DO UPDATE SET
+                      nama=excluded.nama, harga=excluded.harga, stok=excluded.stok,
+                      kategori_id=excluded.kategori_id, barcode=excluded.barcode,
+                      barcode_internal=excluded.barcode_internal,
+                      foto_url=excluded.foto_url,
+                      jenis=excluded.jenis, buyer_sku_code=excluded.buyer_sku_code,
+                      digital_brand=excluded.digital_brand, updated_at=datetime('now')",
+                ) {
+                    for p in &list {
+                        let _ = st.execute((
+                            p.id, &p.nama, p.harga, p.stok, p.kategori_id, &p.barcode, &p.barcode_internal, &p.foto_url,
+                            p.jenis.as_deref().unwrap_or("fisik"),
+                            &p.buyer_sku_code,
+                            p.digital_brand.as_deref().unwrap_or("prabayar"),
+                        ));
+                    }
+                }
+                let _ = tx.commit();
+            }
+            if let Some(ts) = max_updated {
+                let _ = conn.execute(
+                    "INSERT INTO meta (k,v) VALUES ('sync_produk_at',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                    [&ts],
+                );
+            }
+            n_produk = list.len();
+        }
+
+        // Kategori member (ganti isi penuh)
+        if let Some(list) = batch.kategori_member {
+            if let Ok(tx) = conn.transaction() {
+                let _ = tx.execute("DELETE FROM kategori_member", []);
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO kategori_member (id,nama,diskon_persen,urutan) VALUES (?1,?2,?3,0)",
+                ) {
+                    for km in &list { let _ = st.execute((km.id, &km.nama, km.diskon_persen)); }
+                }
+                let _ = tx.commit();
+            }
+            n_km = list.len();
+        }
+
+        // Member
+        if let Some(list) = batch.member {
+            if let Ok(tx) = conn.transaction() {
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO member (id,nama,telepon,kategori_member_id) VALUES (?1,?2,?3,?4)
+                     ON CONFLICT(id) DO UPDATE SET nama=excluded.nama, telepon=excluded.telepon,
+                       kategori_member_id=excluded.kategori_member_id",
+                ) {
+                    for m in &list { let _ = st.execute((m.id, &m.nama, &m.telepon, m.kategori_member_id)); }
+                }
+                let _ = tx.commit();
+            }
+            n_member = list.len();
+        }
+
+        // Users (ganti isi penuh)
+        if let Some(list) = batch.users {
+            if let Ok(tx) = conn.transaction() {
+                let _ = tx.execute("DELETE FROM users_lokal", []);
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO users_lokal (id,toko_id,nama,email,role,aktif,pin_hash) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                ) {
+                    for u in &list {
+                        let _ = st.execute((
+                            u.id, u.toko_id, &u.nama, &u.email, &u.role,
+                            u.aktif as i64, &u.kasir_pin_hash,
+                        ));
+                    }
+                }
+                let _ = tx.execute("DELETE FROM meta WHERE k LIKE 'pin_fail_%'", []);
+                let _ = tx.commit();
+            }
+            n_user = list.len();
+        }
+
+        // Bon (raw JSON ke meta)
+        if let Some(body) = batch.bon {
+            let _ = conn.execute(
+                "INSERT INTO meta (k,v) VALUES ('bon_sync',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [&body],
+            );
+            n_bon = serde_json::from_str::<Vec<serde_json::Value>>(&body)
+                .map(|a| a.len()).unwrap_or(0);
+        }
+
+        // Item virtual (ganti isi penuh)
+        if let Some(list) = batch.item_virtual {
+            if let Ok(tx) = conn.transaction() {
+                let _ = tx.execute("DELETE FROM item_virtual", []);
+                if let Ok(mut st) = tx.prepare_cached(
+                    "INSERT INTO item_virtual (id,nama,harga) VALUES (?1,?2,?3)",
+                ) {
+                    for it in &list { let _ = st.execute((it.id, &it.nama, it.harga)); }
+                }
+                let _ = tx.commit();
+            }
+            n_iv = list.len();
+        }
+
+        (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv)
     }
 
     // GET dengan retry 1x koneksi segar. Akar: reqwest pooling koneksi stale di
@@ -1011,6 +1311,52 @@ impl SyncClient {
             rusqlite::params![m.id, &m.nama, &m.telepon, m.kategori_member_id],
         ).map_err(|e| e.to_string())?;
         Ok(m.nama)
+    }
+
+    /// Push antrian split: read rows (short lock) → POST each (no lock) → delete pushed (short lock).
+    /// Mencegah UI freeze: network POST tidak menahan db.lock.
+    pub fn push_antrian_split(&self, db: &std::sync::Mutex<Connection>, user_id: Option<i64>) -> Result<usize, String> {
+        // FASE 1: read antrian rows (short lock) + upgrade shift offline
+        type Row = (i64, String, String, String, i64, String);
+        let rows: Vec<Row> = {
+            let mut guard = db.lock().map_err(|e| e.to_string())?;
+            let conn = &mut *guard;
+            // upgrade_shift_offline + sync_replay_shift butuh conn (DB ops, bukan network).
+            if let Some(uid) = user_id { let _ = self.upgrade_shift_offline(conn, uid); }
+            let _ = self.sync_replay_shift(conn);
+            let mut st = conn.prepare(
+                "SELECT id, client_ref, produk, metode, total, dibuat_at FROM antrian ORDER BY id",
+            ).map_err(|e| e.to_string())?;
+            let iter = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+                .map_err(|e| e.to_string())?;
+            iter.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+        };
+
+        // FASE 2: POST each row (NO lock)
+        let mut pushed_ids: Vec<i64> = Vec::new();
+        for (id, client_ref, produk, _metode, _total, _dibuat) in &rows {
+            let body: Value = serde_json::from_str(produk)
+                .map_err(|e| format!("parse antrian {client_ref}: {e}"))?;
+            let resp = self.http.post(self.endpoint("/api/transaksi"))
+                .header("Cookie", self.auth_cookie())
+                .json(&body)
+                .send().map_err(|e| format!("network: {e}"))?;
+            if resp.status().is_success() || resp.status().as_u16() == 409 {
+                pushed_ids.push(*id);
+            } else {
+                return Err(format!("push {client_ref}: {}", self.err_detail(resp)));
+            }
+        }
+
+        // FASE 3: delete pushed rows (short lock)
+        if !pushed_ids.is_empty() {
+            let mut guard = db.lock().map_err(|e| e.to_string())?;
+            let conn = &mut *guard;
+            for id in &pushed_ids {
+                conn.execute("DELETE FROM antrian WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(pushed_ids.len())
     }
 
     // Kirim semua transaksi yang antri offline ke server. Sukses → hapus antrian.
