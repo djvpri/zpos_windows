@@ -2660,6 +2660,8 @@
   let autoErrShown=false; // cuma log auto-sync error SEKALI sampai next sukses (anti-spam)
   let autoFailCount=0;    // beruntun gagal — errBar baru setelah >=2, biar drop singkat tak ganggu
   let autoRetryMs=10000;  // retry offline bertahap 10s→30s→60s
+  let lastSyncAt=0;       // timestamp sync terakhir (cooldown anti-flap)
+  const SYNC_COOLDOWN=30000; // min 30s antar autoSync (cegah rapid-fire saat network flap)
   // Tarik katalog penuh (sync_remote) jarang — beban berat (875 produk + users)
   // sekaligus menahan db.lock; push antrian offline ringan dijalankan tiap tick.
   // Sebelum pull pertama (index.html), lastPull=0 → tick pertama selalu pull penuh.
@@ -2843,6 +2845,9 @@
     // token kosong → sync_remote pakai token_jwt via fallback (lihat lib.rs).
     const base=localStorage.getItem('zpos_base');
     if(!base || syncing || !zposIsTauri()) return;
+    // Cooldown: skip kalau sync terakhir <30s — cegah rapid-fire saat network flap
+    // (online/offline event trigger autoSync berulang). Manual syncNow tetap jalan.
+    if(Date.now()-lastSyncAt < SYNC_COOLDOWN) return;
     const throttle = (typeof bon !== 'undefined' && bon.length>0) ? 45000 : PULL_MS;
     const doPull=Date.now()-lastPull>=throttle;
     syncing=true;
@@ -2882,6 +2887,7 @@
     }
     finally{
       syncing=false;
+      lastSyncAt=Date.now();
       // Auto-upload log error → server (diagnosa remote). JALAN TERUS APA PUN
       // hasil sync — justru saat sync GAGAL (app tampak offline) kita butuh log
       // utk diagnosa; kirim dipisah dari sukses/gagal sync. Rust skip sendiri
@@ -2918,7 +2924,12 @@
   })();
   // Trigger INSTAN saat browser melaporkan jaringan pulih/putus — tanpa ini,
   // app menunggu interval 60s berikutnya (gap s/d menit) begitu koneksi kembali.
-  window.addEventListener('online', ()=>autoSync());
+  // Debounce 3s: WiFi flap (hidup-mati cepat) tak trigger autoSync berkali-kali.
+  let onlineDebounce=null;
+  window.addEventListener('online', ()=>{
+    if(onlineDebounce) clearTimeout(onlineDebounce);
+    onlineDebounce=setTimeout(()=>{ onlineDebounce=null; autoSync(); }, 3000);
+  });
   window.addEventListener('offline', ()=>{ offline=true; status(); });
   initKasir();
   cekUpdate();
