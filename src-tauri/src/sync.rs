@@ -1348,9 +1348,9 @@ impl SyncClient {
             }
             let antrian_rows: Vec<(i64, String)> = {
                 let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
-                st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
-                    .map_err(|e| e.to_string())?
-                    .collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
+                let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
             };
             let kk_key = format!("kas_offline_{user_id}_{old_id}");
             let kas_arr: Vec<serde_json::Value> = conn.query_row(
@@ -1450,9 +1450,9 @@ impl SyncClient {
             if pending.is_empty() { return Ok(0); }
             let antrian_rows: Vec<(i64, String)> = {
                 let mut st = conn.prepare("SELECT id, produk FROM antrian").map_err(|e| e.to_string())?;
-                st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
-                    .map_err(|e| e.to_string())?
-                    .collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
+                let iter = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, String>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?
             };
             let mut kas_map: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
             for p in &pending {
