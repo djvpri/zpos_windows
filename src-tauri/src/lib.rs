@@ -287,7 +287,8 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     submit_log(&app, &format!("sync OK kategori={n_kat} produk={n_produk} katmember={n_km} member={n_member} user={n_user} bon={n_bon} itemvirtual={n_iv}"));
 
     // FASE 4: push antrian offline (network, butuh lock untuk read+delete rows).
-    // Lock dipakai singkat: read rows → drop lock → POST → re-lock delete.
+    // Shift ops (upgrade + replay + kas keluar) dipisah — network POST di luar lock.
+    let _ = c.pre_sync_shift_split(&state.db, None); // best-effort
     let n_push = c.push_antrian_split(&state.db, None)?;
 
     Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, item-virtual {n_iv}, push {n_push}"))
@@ -316,7 +317,8 @@ fn push_antrian_only(state: State<AppState>, app: tauri::AppHandle, base_url: St
         if !meta_tok.trim().is_empty() { meta_tok } else { token }
     };
     let c = sync::SyncClient::new(base_url.clone(), token);
-    // FASE 2: push antrian split (read lock → POST no lock → delete lock)
+    // FASE 2: shift ops split (read lock → POST no lock → write lock) + push antrian split
+    let _ = c.pre_sync_shift_split(&state.db, user_id); // best-effort
     let n = c.push_antrian_split(&state.db, user_id)?;
     submit_log(&app, &format!("push_antrian_only OK push={n}"));
     Ok(n)
