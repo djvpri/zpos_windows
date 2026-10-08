@@ -123,8 +123,9 @@ struct SimpanTrx {
 fn antri_transaksi(state: State<AppState>, t: SimpanTrx) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let payload_json = serde_json::to_string(&t.payload).map_err(|e| e.to_string())?;
+    // INSERT OR IGNORE: client_ref UNIQUE index cegah duplikat double-click.
     conn.execute(
-        "INSERT INTO antrian (client_ref,produk,metode,total,dibuat_at,user_id,user_nama)
+        "INSERT OR IGNORE INTO antrian (client_ref,produk,metode,total,dibuat_at,user_id,user_nama)
          VALUES (?1,?2,?3,?4,datetime('now'),?5,?6)",
         rusqlite::params![
             t.client_ref,
@@ -132,6 +133,87 @@ fn antri_transaksi(state: State<AppState>, t: SimpanTrx) -> Result<(), String> {
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Kurangi stok produk di SQLite lokal. Dipanggil frontend setelah transaksi
+/// supaya stok persist (tidak reset saat initKasir re-render dari DB).
+#[tauri::command]
+fn kurangi_stok(state: State<AppState>, items: Vec<(i64, i64)>) -> Result<(), String> {
+    // items: Vec<(produk_id, qty)>
+    let mut guard = state.db.lock().map_err(|e| e.to_string())?;
+    let conn = &mut *guard;
+    for (pid, qty) in items {
+        if pid <= 0 { continue; } // virtual/digital skip
+        conn.execute(
+            "UPDATE produk SET stok = MAX(0, stok - ?1) WHERE id = ?2",
+            rusqlite::params![qty, pid],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Baca riwayat transaksi lokal (7 hari terakhir). Offline-ready.
+#[tauri::command]
+fn baca_riwayat(state: State<AppState>, limit: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let lim = limit.unwrap_or(50);
+    let mut st = conn.prepare(
+        "SELECT client_ref, payload, metode, total, dibuat_at, synced_at FROM riwayat_lokal ORDER BY id DESC LIMIT ?1"
+    ).map_err(|e| e.to_string())?;
+    let iter = st.query_map([lim], |r| Ok(serde_json::json!({
+        "client_ref": r.get::<_,String>(0)?,
+        "payload": r.get::<_,String>(1)?,
+        "metode": r.get::<_,String>(2)?,
+        "total": r.get::<_,i64>(3)?,
+        "dibuat_at": r.get::<_,String>(4)?,
+        "synced_at": r.get::<_,Option<String>>(5)?,
+    }))).map_err(|e| e.to_string())?;
+    iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
+}
+
+/// Simpan nota struk ke SQLite untuk cetak ulang offline.
+#[tauri::command]
+fn simpan_nota(state: State<AppState>, client_ref: String, nota_json: String) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO nota_lokal (client_ref, nota_json) VALUES (?1, ?2)",
+        rusqlite::params![client_ref, nota_json],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Baca nota terakhir untuk cetak ulang.
+#[tauri::command]
+fn baca_nota_terakhir(state: State<AppState>) -> Result<Option<String>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let nota: Option<String> = conn.query_row(
+        "SELECT nota_json FROM nota_lokal ORDER BY id DESC LIMIT 1", [],
+        |r| r.get(0),
+    ).ok();
+    Ok(nota)
+}
+
+/// Cari member by nama/telepon dari SQLite lokal (offline-ready).
+/// Return member + diskon_persen kategori member.
+#[tauri::command]
+fn cari_member_lokal(state: State<AppState>, q: String) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let like = format!("%{}%", q.trim());
+    let mut st = conn.prepare(
+        "SELECT m.id, m.nama, m.telepon, m.kategori_member_id, km.nama, COALESCE(km.diskon_persen,0)
+         FROM member m LEFT JOIN kategori_member km ON km.id=m.kategori_member_id
+         WHERE m.nama LIKE ?1 OR m.telepon LIKE ?1 OR CAST(m.id AS TEXT) = ?2
+         ORDER BY m.nama LIMIT 20"
+    ).map_err(|e| e.to_string())?;
+    let iter = st.query_map(rusqlite::params![&like, q.trim()], |r| Ok(serde_json::json!({
+        "id": r.get::<_,i64>(0)?,
+        "nama": r.get::<_,String>(1)?,
+        "telepon": r.get::<_,Option<String>>(2)?,
+        "kategori_member_id": r.get::<_,Option<i64>>(3)?,
+        "kategori_nama": r.get::<_,Option<String>>(4)?,
+        "diskon_persen": r.get::<_,f64>(5)?,
+    }))).map_err(|e| e.to_string())?;
+    iter.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -237,8 +319,12 @@ fn login_pin(state: State<AppState>, user_id: i64, pin: String) -> Result<bool, 
         return Err(format!("PIN salah ({n}x)."));
     }
 
-    // Sukses → reset counter gagal.
+    // Sukses → reset counter gagal + simpan kasir_aktif_id ke meta (utk sync_remote shift upgrade).
     conn.execute("DELETE FROM meta WHERE k=?1", [&key]).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO meta (k,v) VALUES ('kasir_aktif_id',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+        [user_id.to_string()],
+    ).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
@@ -257,7 +343,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     }
 
     // FASE 1: baca meta (short lock ~1ms). Ambil token_jwt + sync_produk_at.
-    let (token, since_produk) = {
+    let (token, since_produk, meta_uid) = {
         let mut guard = state.db.lock().map_err(|e| e.to_string())?;
         let conn = &mut *guard;
         let meta_tok: String = conn.query_row(
@@ -267,7 +353,10 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
         let since: String = conn.query_row(
             "SELECT v FROM meta WHERE k='sync_produk_at'", [], |r| r.get::<_, String>(0),
         ).unwrap_or_default();
-        (tok, since)
+        let uid: Option<i64> = conn.query_row(
+            "SELECT v FROM meta WHERE k='kasir_aktif_id'", [], |r| r.get::<_, String>(0),
+        ).ok().and_then(|s| s.parse().ok());
+        (tok, since, uid)
     };
 
     submit_log(&app, &format!("sync mulai base={base_url} token={}", mask(token.as_str())));
@@ -288,7 +377,7 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
 
     // FASE 4: push antrian offline (network, butuh lock untuk read+delete rows).
     // Shift ops (upgrade + replay + kas keluar) dipisah — network POST di luar lock.
-    let _ = c.pre_sync_shift_split(&state.db, None); // best-effort
+    let _ = c.pre_sync_shift_split(&state.db, meta_uid); // best-effort, real user_id
     let n_push = c.push_antrian_split(&state.db, None)?;
 
     Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, item-virtual {n_iv}, push {n_push}"))
@@ -1437,6 +1526,7 @@ fn run() {
         .invoke_handler(tauri::generate_handler![
             list_produk, cari_produk, list_member, harga_member,
             antri_transaksi, jumlah_antrian, baca_antrian_pertama, sync_remote, push_antrian_only, jual_digital, buka_devtools,
+            kurangi_stok, baca_riwayat, simpan_nota, baca_nota_terakhir, cari_member_lokal,
             list_users, login_pin,
             setup_kasir, tambah_member, list_kategori_member,
             list_item_virtual, tambah_item_virtual, hapus_item_virtual,

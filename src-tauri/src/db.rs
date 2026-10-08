@@ -91,8 +91,35 @@ pub fn init(conn: &Connection) -> Result<()> {
             nama TEXT NOT NULL,
             harga INTEGER NOT NULL
         );
+
+        -- Riwayat transaksi lokal: baris antrian yg sukses di-push ke server
+        -- dipindahkan sini sebelum DELETE. Kasir bisa lihat transaksi hari ini
+        -- tanpa online. Auto-prune 7 hari.
+        CREATE TABLE IF NOT EXISTS riwayat_lokal (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_ref TEXT NOT NULL UNIQUE,
+            payload    TEXT NOT NULL,
+            metode     TEXT NOT NULL,
+            total      INTEGER NOT NULL,
+            dibuat_at  TEXT NOT NULL,
+            synced_at  TEXT
+        );
+
+        -- Nota struk lokal: simpan data struk terakhir utk cetak ulang offline.
+        CREATE TABLE IF NOT EXISTS nota_lokal (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_ref TEXT NOT NULL,
+            nota_json  TEXT NOT NULL,
+            dibuat_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        -- Cegah duplikat antrian: double-click INSERT 2 baris client_ref sama.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_antrian_client_ref ON antrian(client_ref);
         "#,
     )?;
+
+    // Auto-prune riwayat_lokal > 7 hari (cegah DB bengkak)
+    let _ = conn.execute("DELETE FROM riwayat_lokal WHERE dibuat_at < datetime('now', '-7 days')", []);
 
     // Migration idempoten: DB lama (antrian tanpa user_id/user_nama) pakai ALTER.
     let cols_exist: Vec<String> = conn

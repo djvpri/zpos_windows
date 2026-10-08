@@ -1672,6 +1672,10 @@
             logErr('STOK', `trx ${noTransaksi} tebus=${isTebus?1:0} :: ${stokInfo}`);
             if(nonBon) render();
           }catch(e){ const m=(e&&e.message?e.message:e)||e; logErr('STOK','optimistic decrement gagal '+noTransaksi+' | '+String(m)); }
+          // Persist stok ke SQLite supaya tidak reset saat initKasir re-render.
+          if(nonBon && KURANGI_STOK && zposIsTauri()){
+            try{ const stokItems = items.filter(it=>Number(it.produk_id)>0).map(it=>[Number(it.produk_id), Number(it.qty)]); if(stokItems.length) tinv('kurangi_stok',{items:stokItems}); }catch(e){}
+          }
           // Bon tebus (id server di payload) → tandai selesai web + hapus lokal.
           // Server sudah tandai atomik via bon_tebus_id saat transaksi di-push; tandai
           // di sini idempoten utk jalur yg sempat offline. `lunasPending` kunci anti
@@ -1732,6 +1736,10 @@
                      noTransaksi, metode, kasir:kasirAktif.nama,
                      member: member?.nama || null,
                      waktu:new Date().toLocaleString('id-ID') };
+    // Persist nota ke SQLite untuk cetak ulang offline (app restart tetap bisa).
+    if(zposIsTauri()){
+      try{ tinv('simpan_nota',{client_ref:noTransaksi, nota_json:JSON.stringify(notaTerakhir)}); }catch(e){}
+    }
     document.getElementById('ovTxt').innerHTML = `Rp<b>${total}</b> masuk antrian offline.<br>Auto-sinkron ke server saat online.`;
     document.getElementById('ov').classList.add('show');
     document.getElementById('printBtn').classList.remove('hidden');
@@ -2119,6 +2127,8 @@
     mergeBonSync(); // bon gantung dari sync web terakhir → tampil saat startup/katalog pull
     refLisensi();
     refShift();
+    // Muat nota terakhir dari SQLite (cetak ulang setelah app restart).
+    if(zposIsTauri()){ tinv('baca_nota_terakhir').then(n=>{ if(n){ try{ notaTerakhir=JSON.parse(n); document.getElementById('printBtn').classList.remove('hidden'); }catch(e){} } }).catch(()=>{}); }
   }
   // Muat info lisensi toko (cache dari sync) → badge header + gate transaksi baru.
   // Sumber: `/api/auth/me` (langganan_sampai), disimpan Rust ke meta 'lisensi'.

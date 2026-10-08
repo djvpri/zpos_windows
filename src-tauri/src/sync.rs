@@ -1603,29 +1603,49 @@ impl SyncClient {
             iter.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
         };
 
-        // FASE 2: POST each row (NO lock)
+        // FASE 2: POST each row (NO lock) — continue on error, collect failures
         let mut pushed_ids: Vec<i64> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
         for (id, client_ref, produk, _metode, _total, _dibuat) in &rows {
-            let body: Value = serde_json::from_str(produk)
-                .map_err(|e| format!("parse antrian {client_ref}: {e}"))?;
-            let resp = self.http.post(self.endpoint("/api/transaksi"))
+            let body: Value = match serde_json::from_str(produk) {
+                Ok(v) => v,
+                Err(e) => { errors.push(format!("parse {client_ref}: {e}")); continue; }
+            };
+            let resp = match self.http.post(self.endpoint("/api/transaksi"))
                 .header("Cookie", self.auth_cookie())
                 .json(&body)
-                .send().map_err(|e| format!("network: {e}"))?;
+                .send() {
+                Ok(r) => r,
+                Err(e) => { errors.push(format!("net {client_ref}: {e}")); continue; }
+            };
             if resp.status().is_success() || resp.status().as_u16() == 409 {
                 pushed_ids.push(*id);
             } else {
-                return Err(format!("push {client_ref}: {}", self.err_detail(resp)));
+                errors.push(format!("push {client_ref}: {}", self.err_detail(resp)));
             }
         }
 
-        // FASE 3: delete pushed rows (short lock)
+        // FASE 3: delete pushed rows (short lock) + move to riwayat_lokal
         if !pushed_ids.is_empty() {
             let mut guard = db.lock().map_err(|e| e.to_string())?;
             let conn = &mut *guard;
             for id in &pushed_ids {
+                // Move to riwayat_lokal before delete (if row exists in antrian)
+                if let Ok(row) = conn.query_row(
+                    "SELECT client_ref, produk, metode, total, dibuat_at FROM antrian WHERE id=?1",
+                    [id], |r| Ok((r.get::<_,String>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?, r.get::<_,i64>(3)?, r.get::<_,String>(4)?)),
+                ) {
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO riwayat_lokal (client_ref, payload, metode, total, dibuat_at, synced_at) VALUES (?1,?2,?3,?4,?5,datetime('now'))",
+                        rusqlite::params![row.0, row.1, row.2, row.3, row.4],
+                    );
+                }
                 conn.execute("DELETE FROM antrian WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
             }
+        }
+        // Report: return count pushed. Errors logged but not fatal.
+        if !errors.is_empty() && pushed_ids.is_empty() {
+            return Err(errors.join("; "));
         }
         Ok(pushed_ids.len())
     }
