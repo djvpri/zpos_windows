@@ -198,6 +198,11 @@ pub struct SyncBatch {
     pub users: Option<Vec<RemoteUser>>,
     pub bon: Option<String>,                     // raw JSON body
     pub item_virtual: Option<Vec<RemoteItemVirtual>>,
+    /// Ada endpoint yg balas 401 → token_jwt tersimpan ditolak server (kedaluwarsa,
+    /// JWT_SECRET dirotasi, atau user_id di token sudah tak ada/dinonaktifkan).
+    /// Tanpa flag ini symptom-nya menyesatkan: semua pull jadi None → log "sync OK
+    /// ...=0" (padahal toko punya ribuan produk) dan push 401 berulang tiap menit.
+    pub auth401: bool,
 }
 
 pub struct SyncClient {
@@ -210,6 +215,9 @@ pub struct SyncClient {
     // hapus_bon. `http` (10s) utk sync berat (pull katalog/member antrian). Pisah
     // supaya hapus/tandai bon di kasir nggak nunggu 10s saat web lambat.
     http_fast: reqwest::blocking::Client,
+    // Di-set oleh err_detail saat ada respons 401. Dibaca fetch_all → SyncBatch.auth401
+    // supaya UI bisa bilang "token ditolak, setup ulang" alih-alih "sync OK semua 0".
+    auth401: std::sync::atomic::AtomicBool,
 }
 
 impl SyncClient {
@@ -228,7 +236,7 @@ impl SyncClient {
             .timeout(std::time::Duration::from_secs(3))
             .build()
             .expect("build sync http_fast client");
-        Self { base, token, http, http_fast }
+        Self { base, token, http, http_fast, auth401: std::sync::atomic::AtomicBool::new(false) }
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -246,6 +254,7 @@ impl SyncClient {
     // ketahuan 401/404/500, endpoint mana, & pesannya). Panggil HANYA di return.
     fn err_detail(&self, resp: reqwest::blocking::Response) -> String {
         let status = resp.status();
+        if status.as_u16() == 401 { self.auth401.store(true, std::sync::atomic::Ordering::Relaxed); }
         // Header DIAMBIL DULU — `.text()` mengonsumsi resp (use-after-move kalau
         // headers() dipanggil setelahnya; tak akan compile).
         let srv = resp
@@ -300,7 +309,8 @@ impl SyncClient {
         let users = self.fetch_users().ok();
         let bon = self.fetch_bon().ok();
         let item_virtual = self.fetch_item_virtual().ok();
-        SyncBatch { license, kategori, produk, kategori_member, member, users, bon, item_virtual }
+        let auth401 = self.auth401.load(std::sync::atomic::Ordering::Relaxed);
+        SyncBatch { license, kategori, produk, kategori_member, member, users, bon, item_virtual, auth401 }
     }
 
     fn fetch_license(&self) -> Result<(String, String), String> {

@@ -365,6 +365,10 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     // FASE 2: fetch semua data network TANPA db.lock.
     // Jika jaringan putus di sini, tidak menahan lock — UI tetap responsif.
     let batch = c.fetch_all(&since_produk);
+    // Token ditolak server → JANGAN lapor "sync OK kategori=0 produk=0 ..." (menyesatkan;
+    // toko bisa punya ribuan produk). Balik error jelas supaya ErrBar + diagnosa muncul
+    // dan kasir tahu harus Setup ulang (email+password) di Pengaturan.
+    let auth401 = batch.auth401;
 
     // FASE 3: apply semua write ke DB (short lock ~100ms).
     let (n_kat, n_produk, n_km, n_member, n_user, n_bon, n_iv) = {
@@ -379,6 +383,11 @@ fn sync_remote(state: State<AppState>, app: tauri::AppHandle, base_url: String, 
     // Shift ops (upgrade + replay + kas keluar) dipisah — network POST di luar lock.
     let _ = c.pre_sync_shift_split(&state.db, meta_uid); // best-effort, real user_id
     let n_push = c.push_antrian_split(&state.db, None)?;
+
+    if auth401 {
+        submit_log(&app, "sync GAGAL: token ditolak server (401) — setup ulang email+password di Pengaturan");
+        return Err("Token ditolak server (401). Token tersimpan kedaluwarsa/di-reset. Buka Pengaturan → isi email & password admin → Simpan & Sinkron.".to_string());
+    }
 
     Ok(format!("kategori {n_kat}, produk {n_produk}, kategori-member {n_km}, member {n_member}, user {n_user}, bon {n_bon}, item-virtual {n_iv}, push {n_push}"))
 }
