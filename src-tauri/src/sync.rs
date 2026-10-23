@@ -436,6 +436,11 @@ impl SyncClient {
     pub fn apply_all(&self, conn: &mut Connection, batch: SyncBatch, app: &tauri::AppHandle) -> (usize, usize, usize, usize, usize, usize, usize) {
         let mut n_kat = 0; let mut n_produk = 0; let mut n_km = 0;
         let mut n_member = 0; let mut n_user = 0; let mut n_bon = 0; let mut n_iv = 0;
+        // true = tenant berganti di batch ini. Fetch-nya SUDAH terlanjur pakai `since`
+        // milik tenant lama, jadi `max_updated` batch ini bukan titik aman: kalau
+        // ditulis ke `sync_produk_at`, semua produk lama tenant baru tak akan pernah
+        // ikut ter-pull (gejala: katalog cuma 1-2 produk selamanya setelah ganti toko).
+        let mut tenant_baru = false;
 
         // License + tenant check
         if let Some((toko, lisensi_json)) = batch.license {
@@ -448,6 +453,7 @@ impl SyncClient {
                     let _ = conn.execute(&format!("DELETE FROM {tbl}"), []);
                 }
                 let _ = conn.execute("DELETE FROM meta WHERE k='sync_produk_at'", []);
+                tenant_baru = true;
             }
             let _ = conn.execute(
                 "INSERT INTO meta (k,v) VALUES ('toko_terakhir',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
@@ -498,10 +504,13 @@ impl SyncClient {
                 let _ = tx.commit();
             }
             if let Some(ts) = max_updated {
-                let _ = conn.execute(
-                    "INSERT INTO meta (k,v) VALUES ('sync_produk_at',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
-                    [&ts],
-                );
+                // Tenant baru: jangan simpan titik sync dari batch parsial (lihat tenant_baru).
+                if !tenant_baru {
+                    let _ = conn.execute(
+                        "INSERT INTO meta (k,v) VALUES ('sync_produk_at',?1) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                        [&ts],
+                    );
+                }
             }
             n_produk = list.len();
         }
@@ -1293,6 +1302,10 @@ impl SyncClient {
                 [t],
             ).map_err(|e| e.to_string())?;
         }
+        // Setup ulang = (kemungkinan) toko/token baru. Buang titik sync produk supaya
+        // sync berikutnya FULL pull, bukan incremental dengan `since` milik toko lama
+        // (kalau tidak: katalog cuma berisi produk yang kebetulan update setelah `since`).
+        let _ = conn.execute("DELETE FROM meta WHERE k='sync_produk_at'", []);
         Ok((n, toko_nama))
     }
 

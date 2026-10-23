@@ -5897,7 +5897,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zpos-kasir"
-version = "0.1.138"
+version = "0.1.139"
 dependencies = [
  "bcrypt",
  "chrono",
