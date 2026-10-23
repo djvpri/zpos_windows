@@ -586,6 +586,10 @@
   // Kebijakan stok — sumber: Pengaturan web, sinkron Rust ke meta 'lisensi'.
   // Default true (perilaku historis) sebelum sync pertama.
   let KURANGI_STOK = true;
+  // Toko boleh jual walau stok 0 (Pengaturan web → `jual_stok_habis`). Web POS sudah
+  // menghormatinya di /api/transaksi; kasir DULU mengabaikannya → barang stok 0 tampak
+  // "tidak ada" (kartu abu-abu, klik di-blok) walau ada di katalog & di z1 pos.
+  let JUAL_STOK_HABIS = false;
   // Info toko utk header nota (cached dr `ambil_lisensi`/sync): nama, alamat,
   // telepon, catatan_struk. Fallback ke teks statis bila belum sinkron.
   let TOKO_INFO = { nama:'Z1 Kasir', alamat:'', telepon:'', catatan_struk:'', desain_nota:'klasik' };
@@ -842,7 +846,7 @@
       // walau stok 0 (produk virtual — server force stok 0), ditandai badge.
       const dig = p.jenis==='digital';
       // KURANGI_STOK=OFF: stok tak diurus, semua barang bisa diklik (jual bebas).
-      const blok = !dig && KURANGI_STOK && p.s<=0;
+      const blok = !dig && KURANGI_STOK && !JUAL_STOK_HABIS && p.s<=0;
       return `<div class="card ${blok?'empty':(!dig&&p.s<5?'low':'')}" onclick="${blok?'void(0)':`add(${p.id})`}">
         <div class="ph"><i class="bi ${p.e||(dig?'bi-phone':'bi-box')}"></i></div><div class="nm">${p.n}${dig?' <span style="color:#22c55e;font-size:10px;padding:1px 6px;border:1px solid #22c55e;border-radius:9px">DIGITAL</span>':''}</div>
         <div class="pr">${fmt(p.p)}</div><div class="stk">${dig?'':'stok '+p.s}</div>
@@ -855,13 +859,13 @@
     const p=PRODUK.find(p=>p.id===id); if(!p) return;
     const dig = p.jenis==='digital';
     // KURANGI_STOK=OFF (Pengaturan web): stok tak diurus kasir — jual bebas.
-    if(KURANGI_STOK && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+    if(KURANGI_STOK && !JUAL_STOK_HABIS && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
     // Grup baris = grup yg sedang AKTIF. Saat bon ditarik, barang baru masuk grup
     // BARU (tak menyerap ke grup lama) → susunan grup bon tak pernah bergeser.
     const g = _grupAktif;
     const f=cart.find(c=>c.id===id && c.g===g);
     const q=(f?f.q:0)+1;
-    if(KURANGI_STOK && !dig && q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    if(KURANGI_STOK && !JUAL_STOK_HABIS && !dig && q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     if(f) f.q++; else cart.push({id,q:1,g});
     renderCart();
   }
@@ -976,7 +980,7 @@
     const c=cart[x];
     const p=pCart(c.id);
     const dig = p && p.jenis==='digital';
-    if(KURANGI_STOK && !dig && d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+    if(KURANGI_STOK && !JUAL_STOK_HABIS && !dig && d>0 && p && c.q+1>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     c.q+=d; if(c.q<=0)cart.splice(x,1); renderCart();
   }
   // Simpan nomor tujuan utk item digital di keranjang (customer_no per item).
@@ -1566,8 +1570,8 @@
       const p=pCart(c.id);
       if(!p) continue;
       const dig = p.jenis==='digital';
-      if(KURANGI_STOK && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
-      if(KURANGI_STOK && !dig && c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
+      if(KURANGI_STOK && !JUAL_STOK_HABIS && !dig && p.s<=0){ toast('❌ '+p.n+' stok habis'); return; }
+      if(KURANGI_STOK && !JUAL_STOK_HABIS && !dig && c.q>p.s){ toast('Stok '+p.n+' cukup '+p.s); return; }
     }
     const subtotal=cart.reduce((s,c)=>{ const p=pCart(c.id); if(!p)return s; const h=hargaBaris(c).h; return s+h*c.q; },0);
     const diskon=diskonCart; // diskon MANUAL dari input keranjang (sudah di-clamp renderCart)
@@ -2156,6 +2160,10 @@
           // ulang render kalau nilainya beda, supaya kartu stok 0 langsung
           // bisa diklik (OFF) atau terblokir (ON) tanpa restart.
           if(baru!==KURANGI_STOK){ KURANGI_STOK=baru; try{ render(); }catch(e){} }
+        }
+        if(l.jual_stok_habis!=null){
+          const baru = !!l.jual_stok_habis;
+          if(baru!==JUAL_STOK_HABIS){ JUAL_STOK_HABIS=baru; try{ render(); }catch(e){} }
         }
       }
       if(!l){ badge.classList.add('hidden'); LISENSI={free:true}; return; }
